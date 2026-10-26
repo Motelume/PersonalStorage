@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PersonalStorage离线审核结果1.0",
+  "type": "object",
+  "required": ["schema_version", "policy_hash", "items"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "policy_hash": {"type": "string"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["review_id", "expected_version", "assignment_version", "assignment_fingerprint", "decision"],
+        "properties": {
+          "review_id": {"type": "string"},
+          "item_id": {"type": "string"},
+          "expected_version": {"type": "string"},
+          "assignment_version": {"type": "integer", "minimum": 0},
+          "assignment_fingerprint": {"type": "string"},
+          "decision": {"enum": ["confirm", "needs_user_input", "suggest_reclassify"]},
+          "target_parent": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$comment": "此schema描述交换格式；运行时还检查当前文件、规则、人工锁定、对象与归属版本，不能仅以schema通过授权移动。"
+}

@@ -1,0 +1,2 @@
+# Optional local PDF extraction only. Core commands use Python standard library.
+pypdf

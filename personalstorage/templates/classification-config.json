@@ -1,0 +1,31 @@
+{
+  "schema_version": "3.0",
+  "policy_version": "1.0.0",
+  "description": "通用初始模板；不包含任何个人任务或自动关键词归属。",
+  "constraints": {
+    "preserve_names": true,
+    "preserve_content": true,
+    "no_delete": true,
+    "no_overwrite": true,
+    "no_dedup": true,
+    "same_volume_only": true,
+    "preserve_bundles": true,
+    "no_network": true
+  },
+  "categories": [
+    {"root": "00_收件箱"},
+    {"root": "01_课程学习"},
+    {"root": "02_项目"},
+    {"root": "03_竞赛"},
+    {"root": "04_学生工作与实践"},
+    {"root": "05_升学与交流"},
+    {"root": "06_资料库"},
+    {"root": "07_个人资料"},
+    {"root": "08_软件与工具"},
+    {"root": "09_移动硬盘管理"},
+    {"root": "99_临时待整理"}
+  ],
+  "review_path": "00_收件箱/待确认",
+  "tasks": [],
+  "executable_rules": []
+}
