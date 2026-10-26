@@ -56,3 +56,30 @@ class ConfigurationTests(unittest.TestCase):
         from personalstorage import setup
         repo=Path(setup.__file__).resolve().parents[1]
         with self.assertRaises(SafetyError):setup_library(repo)
+
+    def test_setup_builds_fixed_structure_without_dynamic_tasks(self):
+        root=self.base/'data';result=setup_library(root)
+        config=read_json(root/'_整理规则/分类配置.json')
+        self.assertEqual(len(config['categories']),11)
+        self.assertEqual(len(result['fixed_subdirectories']),12)
+        for relative in config['initialization']['fixed_subdirectories']:
+            self.assertTrue((root/relative).is_dir(),relative)
+        for name in ('01_课程学习','02_项目','03_竞赛'):
+            self.assertEqual(list((root/name).iterdir()),[])
+        self.assertFalse(any('<' in p.name or '>' in p.name for p in root.rglob('*')))
+        self.assertIn('细分目录规则',(root/'_整理规则/整理规则.md').read_text(encoding='utf-8'))
+        self.assertTrue(config['classification_rules'])
+        self.assertTrue(config['subcategory_rules'])
+        self.assertEqual(Policy(root).classify({'name':'lecture.pdf','kind':'file','text':'通用机器学习教材'})['decision'],'review')
+
+    def test_invalid_skeleton_rejected_before_creation(self):
+        import copy
+        from personalstorage import setup
+        template=read_json(Path(setup.__file__).with_name('templates')/'classification-config.json')
+        for relative in ('../outside','10_未批准/资料','02_项目/<项目名>'):
+            root=self.base/str(len(relative))
+            config=copy.deepcopy(template)
+            config['initialization']['fixed_subdirectories']=[relative]
+            with patch('personalstorage.setup.read_json',return_value=config):
+                with self.assertRaises(SafetyError):setup_library(root)
+            self.assertFalse(root.exists())
