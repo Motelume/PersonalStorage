@@ -1,0 +1,101 @@
+"""Native WebView2 application hosting the same loopback web frontend."""
+import argparse
+import ctypes
+import json
+import os
+from pathlib import Path
+import sys
+import threading
+import time
+
+from .config import default_root
+from .common import SafetyError
+from .web import make_server
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description='PersonalStorage 独立桌面应用')
+    parser.add_argument('--root',default=default_root());parser.add_argument('--profile')
+    parser.add_argument('--self-test-report',help=argparse.SUPPRESS)
+    args=parser.parse_args(argv)
+    if os.name!='nt':raise SafetyError('桌面版当前只支持Windows')
+    try:import webview
+    except ImportError:raise SafetyError('桌面组件未安装，请使用打包的PersonalStorage.exe或安装requirements-desktop.txt') from None
+    server=make_server(args.root,args.profile)
+    server.desktop.native_mode=True
+    server_thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.2},daemon=True)
+    server_thread.start()
+    webview.settings['ALLOW_DOWNLOADS']=True
+    webview.settings['ALLOW_FILE_URLS']=False
+    webview.settings['OPEN_DEVTOOLS_IN_DEBUG']=False
+    window=webview.create_window('PersonalStorage',server.desktop.url,width=1400,height=940,
+        min_size=(850,650),background_color='#f5f7fb',text_select=True)
+    finished=threading.Event()
+    def closed():
+        finished.set();server.desktop.stop.set()
+        threading.Thread(target=server.shutdown,daemon=True).start()
+    window.events.closed+=closed
+    def observe_service():
+        server_thread.join()
+        if not finished.is_set():
+            try:window.destroy()
+            except Exception:pass
+    threading.Thread(target=observe_service,daemon=True).start()
+    def smoke():
+        if not args.self_test_report:return
+        result={'ok':False,'engine':'edgechromium','ui_mode':'desktop'}
+        try:
+            for _ in range(200):
+                if finished.is_set():raise SafetyError('测试窗口提前关闭')
+                try:
+                    ready=window.evaluate_js('typeof S !== "undefined" && !!S.boot && !S.busy')
+                    if ready:break
+                except Exception:pass
+                time.sleep(.1)
+            else:raise SafetyError('桌面页面未完成加载')
+            data=window.evaluate_js('({root:S.boot.status.root,mode:S.boot.ui_mode,pages:document.querySelectorAll("nav button").length,model_enabled:S.boot.model_enabled})')
+            if data['mode']!='desktop' or data['pages']!=5:raise SafetyError('桌面界面状态不正确')
+            window.evaluate_js('load("ai");true')
+            for _ in range(100):
+                if window.evaluate_js('document.getElementById("ai-key") !== null'):break
+                time.sleep(.1)
+            else:raise SafetyError('AI管理页面未显示')
+            if not window.evaluate_js('document.getElementById("ai-key").value === ""'):raise SafetyError('页面不应回显密钥')
+            import tempfile,zipfile
+            from .extraction import extract
+            with tempfile.TemporaryDirectory(prefix='personalstorage-native-test-') as folder:
+                sample=Path(folder)/'example.docx'
+                with zipfile.ZipFile(sample,'w') as archive:
+                    archive.writestr('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>native extraction sample</w:t></w:r></w:p></w:body></w:document>')
+                parsed=extract(sample)
+                if 'native extraction sample' not in parsed.get('text',''):raise SafetyError('打包版文档提取失败')
+            result['bundled_document_extraction']=True
+            result.update(ok=True,**data)
+        except Exception as exc:result['error']=str(exc)
+        finally:
+            path=Path(args.self_test_report);path.parent.mkdir(parents=True,exist_ok=True)
+            with path.open('x',encoding='utf-8') as stream:json.dump(result,stream,ensure_ascii=False,indent=2)
+            window.destroy()
+    try:
+        profile=server.desktop.profile/'desktop-webview'
+        webview.start(smoke,gui='edgechromium',debug=False,private_mode=True,storage_path=str(profile))
+    finally:
+        finished.set();server.desktop.stop.set();server.shutdown();server_thread.join(timeout=5)
+        server.server_close();server.desktop.close()
+    return 0
+
+
+def entry():
+    if len(sys.argv)==5 and sys.argv[1]=='--extract-worker':
+        from .extraction import _extract_local
+        target=Path(sys.argv[4])
+        with target.open('x',encoding='utf-8') as stream:json.dump(_extract_local(sys.argv[2],int(sys.argv[3])),stream,ensure_ascii=False)
+        return 0
+    try:return main()
+    except Exception as exc:
+        message=str(exc)
+        if os.name=='nt':ctypes.windll.user32.MessageBoxW(None,'启动失败：'+message+'\n\n请确认资料目录已配置，且已安装Microsoft WebView2 Runtime。','PersonalStorage',0x10)
+        return 2
+
+
+if __name__=='__main__':raise SystemExit(entry())

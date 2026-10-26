@@ -11,6 +11,7 @@ from unittest.mock import patch
 from personalstorage.web import make_server
 from personalstorage.common import write_json, manifest
 from personalstorage import reports
+from personalstorage.credentials import CredentialVault
 from test_core import config
 
 
@@ -23,6 +24,7 @@ class WebTests(unittest.TestCase):
         (self.root/'01_课程学习/测试课程').mkdir(parents=True)
         write_json(self.root/'_整理规则/分类配置.json', config())
         self.server = make_server(self.root, self.base/'profile')
+        self.server.desktop.credential_vault = CredentialVault(self.base/'test-credentials.sqlite3')
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = self.server.desktop.url
@@ -194,3 +196,43 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.job('resolve-external',{'id':fresh['id']})['state'],'done')
         directory=self.request('directories')['items'][0]
         self.assertEqual(self.job('resolve-external',{'id':directory['id']})['state'],'error')
+
+    def test_ai_preview_run_and_adopt_safe_plan(self):
+        from test_ai import FakeProvider
+        vault=self.server.desktop.credential_vault
+        vault.save('sk-'+'test-only-credential'*2)
+        provider=FakeProvider()
+        self.server.desktop.ai_provider_factory=lambda *a,**k:provider
+        configured=self.job('ai-configure',{'enabled':True,'max_items':1})
+        self.assertEqual(configured['state'],'done')
+        self.file('unknown.txt','example learning notes')
+        self.file('other.txt','keep this in inbox')
+        rows=self.job('scan')['result']['rows']
+        row=next(r for r in rows if r['source'].endswith('unknown.txt'))
+        prepared=self.job('ai-prepare',{'ids':[row['id']]})['result']
+        self.assertEqual(provider.calls,0)
+        self.assertIn('example learning notes',prepared['items'][0]['excerpt'])
+        reviewed=self.job('ai-run',{'ticket':prepared['ticket']})
+        self.assertEqual(reviewed['state'],'done',reviewed)
+        self.assertTrue((self.root/'00_收件箱/unknown.txt').exists())
+        pending=self.request('pending')[0]
+        plan=self.job('ai-adopt',{'id':pending['id']})
+        self.assertEqual(plan['state'],'done',plan)
+        self.assertEqual(len(plan['result']['actions']),1)
+        self.assertTrue((self.root/'00_收件箱/unknown.txt').exists())
+        self.assertEqual(self.job('execute',{'plan_id':plan['result']['id']})['state'],'done')
+        self.assertTrue((self.root/'01_课程学习/测试课程/unknown.txt').exists())
+        self.assertTrue((self.root/'00_收件箱/other.txt').exists())
+        public=json.dumps(self.request('bootstrap'))
+        self.assertNotIn(vault.read(),public)
+
+    def test_ai_configuration_and_connection_stay_local_and_safe(self):
+        from test_ai import FakeProvider
+        provider=FakeProvider();self.server.desktop.ai_provider_factory=lambda *a,**k:provider
+        key='sk-'+'test-only-credential'*2
+        self.assertEqual(self.job('ai-configure',{'enabled':True,'api_key':key})['state'],'done')
+        self.assertEqual(self.job('ai-test')['result']['connected'],True)
+        self.assertNotIn(key,json.dumps(self.request('bootstrap')))
+        self.assertEqual(self.job('ai-configure',{'model':'unknown'})['state'],'error')
+        self.assertEqual(self.job('ai-clear-key')['state'],'done')
+        self.assertFalse(self.request('bootstrap')['model_enabled'])

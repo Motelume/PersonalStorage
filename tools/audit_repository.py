@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {'.gitignore', '.gitattributes', 'README.md', 'SECURITY.md',
-              'pyproject.toml', 'requirements-optional.txt', 'run.cmd', '启动界面.cmd'}
+              'pyproject.toml', 'requirements-optional.txt', 'requirements-desktop.txt', 'run.cmd', '启动界面.cmd','启动桌面版.cmd'}
 SENSITIVE = [re.compile(r'[A-Za-z]:[/\\]Users[/\\][^/\\\s]+', re.I),
              re.compile(r'\bgh[pousr]_[A-Za-z0-9]{20,}\b'),
              re.compile(r'\bgithub_pat_[A-Za-z0-9_]{30,}\b'),
@@ -21,11 +21,11 @@ def allowed(name):
     if name in ROOT_FILES: return True
     if len(p.parts) == 2 and p.parts[0] in ('personalstorage', 'tests') and p.suffix == '.py': return True
     if name in ('personalstorage/web_static/index.html', 'personalstorage/web_static/app.js',
-                'personalstorage/web_static/app.css', 'personalstorage/templates/AGENTS.md',
+                'personalstorage/web_static/app.css','personalstorage/web_static/ai.js', 'personalstorage/templates/AGENTS.md',
                 'personalstorage/templates/classification.md', 'personalstorage/templates/classification-config.json',
-                'schemas/review-result.schema.json', 'docs/architecture.md',
+                'schemas/review-result.schema.json', 'docs/architecture.md','docs/ai-guide.md','docs/desktop-guide.md',
                 '.github/workflows/tests.yml', 'tools/audit_repository.py',
-                'tools/frontend_smoke.cjs', 'tools/web_fixture.py'): return True
+                'tools/frontend_smoke.cjs','tools/frontend_ai_smoke.cjs', 'tools/web_fixture.py','tools/desktop_entry.py','tools/build_desktop.py'): return True
     return False
 
 

@@ -46,6 +46,13 @@ def extract(path,limit=16000,timeout=15):
         if p.stat().st_size>128*1024*1024:
             fallback['warnings'].append('正文/包解析超过128MiB预算；仍可按明确任务上下文整体归档，完整性哈希不省略')
             return fallback
+        if getattr(sys,'frozen',False):
+            import tempfile
+            with tempfile.TemporaryDirectory(prefix='personalstorage-extract-') as folder:
+                output=Path(folder)/'extracted.json'
+                done=subprocess.run([sys.executable,'--extract-worker',str(p),str(min(limit,16000)),str(output)],capture_output=True,timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                if done.returncode or not output.is_file():raise ValueError('只读解析子进程失败')
+                return json.loads(output.read_text(encoding='utf-8'))
         done=subprocess.run([sys.executable,'-X','utf8','-m','personalstorage.extraction','--worker',str(p),str(min(limit,16000))],cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8',timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         if done.returncode: raise ValueError('只读解析子进程失败')
         return json.loads(done.stdout)

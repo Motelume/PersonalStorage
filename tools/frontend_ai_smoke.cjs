@@ -1,0 +1,43 @@
+// Isolated UI test: synthetic files and fake provider, no network or actual API key.
+const {chromium}=require('playwright');
+const {spawn}=require('child_process');
+const readline=require('readline');
+const fs=require('fs');const path=require('path');const assert=require('assert/strict');
+const root=path.resolve(__dirname,'..');
+const child=spawn(process.env.PYTHON||'python',['-X','utf8',path.join(__dirname,'web_fixture.py'),'--ai-fixture'],{cwd:root,windowsHide:true});
+let fixture,browser,page;
+async function main(){
+ fixture=await new Promise((resolve,reject)=>{const rl=readline.createInterface({input:child.stdout});rl.once('line',s=>{try{resolve(JSON.parse(s));}catch(e){reject(e);}});child.stderr.on('data',d=>process.stderr.write(d));child.once('error',reject);});
+ browser=await chromium.launch({headless:true,channel:'msedge'});page=await browser.newPage({viewport:{width:1440,height:1000}});
+ const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+ const idle=()=>page.waitForFunction(()=>!S.busy&&!S.acting);
+ await page.goto(fixture.url);await page.locator('tbody tr').filter({hasText:'unknown.txt'}).waitFor();await idle();
+ await page.locator('nav [data-page=ai]').click();await page.locator('#ai-key').waitFor();
+ assert.equal(await page.locator('#ai-key').inputValue(),'');
+ await page.getByRole('button',{name:'测试连接',exact:true}).click();await idle();
+ await page.getByText('DeepSeek连接成功，可用模型：deepseek-flash',{exact:true}).waitFor();
+ await page.locator('nav [data-page=inbox]').click();await page.locator('tbody tr').filter({hasText:'unknown.txt'}).waitFor();await idle();
+ await page.locator('tbody tr').filter({hasText:'unknown.txt'}).click();
+ await page.getByRole('button',{name:'AI 审核此项',exact:false}).click();
+ await page.getByRole('button',{name:'发送这 1 项至 DeepSeek',exact:true}).waitFor();
+ assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));
+ assert.equal(await page.evaluate(()=>S.boot.ai.history.length),0);
+ await page.getByRole('button',{name:'发送这 1 项至 DeepSeek',exact:true}).click();await idle();
+ await page.locator('tbody tr').filter({hasText:'unknown.txt'}).click();
+ await page.getByRole('button',{name:'采用AI建议并预览',exact:true}).click();
+ await page.getByRole('button',{name:'执行这 1 项',exact:true}).waitFor();
+ assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));
+ await page.getByRole('button',{name:'执行这 1 项',exact:true}).click();await idle();
+ assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/unknown.txt')));
+ assert(fs.existsSync(path.join(fixture.root,'00_收件箱/other.txt')));
+ await page.locator('nav [data-page=ai]').click();await page.locator('#ai-key').waitFor();
+ assert.equal(await page.locator('#ai-key').inputValue(),'');
+ assert.equal(await page.evaluate(()=>S.boot.ai.history.length),1);
+ await page.getByRole('button',{name:'移除密钥…',exact:true}).click();
+ await page.getByRole('button',{name:'确认移除',exact:true}).click();await idle();
+ await page.getByText('本机保存的密钥已移除，AI已停用。',{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>S.boot.model_enabled),false);
+ assert.deepEqual(errors,[]);
+ console.log('PASS: AI settings, masked credentials, test connection, consent preview, review, adopt-preview-execute, usage and credential removal.');
+}
+main().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(fixture)fs.writeFileSync(fixture.stop,'stop');else child.kill();});

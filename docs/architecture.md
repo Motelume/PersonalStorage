@@ -12,7 +12,8 @@
 | review / reports | 离线审核、手动完成待办、历史与状态 |
 | snapshot | 一致性管理数据库快照和规则文本说明 |
 | web / web_static | 回环接口、单工作队列与四页前端 |
-| model_client | 模型协议接口，默认拒绝联网 |
+| ai / model_client / credentials | 明确授权的DeepSeek审核、用量管理、DPAPI凭据；与移动执行器分离 |
+| desktop | 内嵌WebView2窗口，共用网页与本机HTTP适配 |
 
 每个工作线程创建自己的SQLite连接。长任务进入单工作队列；所有实际移动仍受进程间锁约束。HTTP对象句柄和预览属于当前服务会话，重启后重新读取列表及生成预览。
 

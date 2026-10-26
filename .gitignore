@@ -6,8 +6,10 @@
 !/SECURITY.md
 !/pyproject.toml
 !/requirements-optional.txt
+!/requirements-desktop.txt
 !/run.cmd
 !/启动界面.cmd
+!/启动桌面版.cmd
 !/personalstorage/
 !/tests/
 !/schemas/

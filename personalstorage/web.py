@@ -1,4 +1,4 @@
-"""Loopback-only desktop adapter. No model provider or arbitrary filesystem API."""
+"""Loopback desktop adapter with separately authorized DeepSeek reviews."""
 import argparse
 import hmac
 import json
@@ -19,6 +19,7 @@ from .extraction import extract
 from . import reports
 from .recovery import undo
 from .review import resolve_external, review_context
+from .ai import AIManager
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -34,6 +35,9 @@ class Desktop:
         self.previews = {}
         self.jobs = {}
         self.downloads = {}
+        self.ai_packets = {}
+        self.credential_vault = None
+        self.ai_provider_factory = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='storage-ui')
         self.stop = threading.Event()
         self.watch = None
@@ -82,10 +86,11 @@ class Desktop:
             s = app.status()
             s.update(watching=bool(self.watch and self.watch.is_alive()), watch_error=self.watch_error)
             auth = app.state.get('automation')
-            return {'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash,
+            ai = AIManager(app, vault=self.credential_vault).status()
+            return {'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash, 'ai':ai,'ui_mode':'desktop' if getattr(self,'native_mode',False) else 'web',
                     'authorization_current': bool(auth and auth['policy_hash'] == app.policy.hash),
                     'authorization_scope_root': bool(auth and auth.get('include_root')),
-                    'model_enabled': False}
+                    'model_enabled': ai['settings']['enabled'] and ai['configured']}
 
     def pending(self, history=False):
         with self.app() as app:
@@ -139,6 +144,36 @@ class Desktop:
             {k: v for k, v in a.items() if k != 'manifest'} for a in plan['actions']]}
 
     def perform(self, app, action, b, job):
+        if action.startswith('ai-'):
+            manager=AIManager(app, vault=self.credential_vault, provider_factory=self.ai_provider_factory)
+            if action=='ai-configure':return manager.configure(b)
+            if action=='ai-test':return manager.test()
+            if action=='ai-clear-key':return manager.clear_key()
+            if action=='ai-prepare':
+                ids=b.get('ids')
+                if not isinstance(ids,list) or not ids or len(ids)>10:raise SafetyError('请选择1至10项资料')
+                packet=manager.prepare([self.get(i) for i in ids])
+                self.ai_packets[packet['id']]=packet
+                return {'ticket':packet['id'],'model':packet['config']['model'],'with_content':packet['config']['with_content'],
+                    'target_count':len(packet['request']['candidate_targets']),
+                    'items':[{'name':d['name'],'source':d['source'],'excerpt':d['text'],'members':d['members'],'warnings':d['warnings']} for d in packet['request']['documents']]}
+            if action=='ai-run':
+                packet=self.ai_packets.pop(b.get('ticket'),None)
+                if not packet:raise SafetyError('AI发送预览已失效，请重新选择')
+                job['phase']='DeepSeek正在审核，等待结构化结果'
+                return manager.run(packet)
+            if action=='ai-adopt':
+                obj=self.get(b['id'])
+                row=app.state.db.execute('SELECT r.*,i.path FROM reviews r JOIN items i ON i.id=r.item_id WHERE r.id=?',(obj.get('review_id'),)).fetchone()
+                if not row or row['status']!='correction_required' or review_context(row)!=obj.get('review_context_hash'):raise SafetyError('建议已变化，请刷新待办')
+                data=json.loads(row['data']);result=data.get('result',{})
+                if result.get('decision')!='suggest_reclassify':raise SafetyError('没有可采用的归属建议')
+                if digest(manifest(safe_path(app.root,obj['path'])))!=data['version']:raise SafetyError('资料已变化，请重新审核')
+                parent=result['target_parent']
+                if not safe_path(app.root,parent).is_dir():raise SafetyError('建议目录已不存在')
+                self.perform(app,'detail',b,job)
+                return self.perform(app,'preview',{'ids':[b['id']],'target_id':self.object(parent,directory=True),
+                    'evidence':'用户采用AI建议：'+result.get('reason','')},job)
         if action == 'scan':
             job['phase'] = '读取收件箱并生成建议'
             plan = app.plan(include_root=b.get('include_root') is True)
@@ -336,9 +371,9 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
-                types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
+                types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
                 return self.send(200, (STATIC / name).read_bytes(), types[name])
             else: return self.send(404, {'error':'页面不存在'})
             self.send(200, result)
@@ -352,7 +387,9 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 4 * 1024 * 1024: raise SafetyError('请求大小无效或超过4MiB')
             self.connection.settimeout(15)
-            b = json.loads(self.rfile.read(length))
+            raw = self.rfile.read(length)
+            self._body_read = True
+            b = json.loads(raw)
             if not isinstance(b, dict): raise SafetyError('需使用对象请求')
             action = urlsplit(self.path).path.removeprefix('/api/')
             d = self.server.desktop
@@ -370,11 +407,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not target.is_dir(): raise SafetyError('目录不存在')
                 os.startfile(str(target))
                 result = {'opened':True}
-            elif action in {'scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot'}:
+            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot'}:
                 result = d.job(action, b)
             else: raise SafetyError('未知操作')
             self.send(200, result)
-        except (SafetyError, KeyError, ValueError, OSError) as exc: self.send(400, {'error':str(exc)})
+        except (SafetyError, KeyError, ValueError, OSError) as exc:
+            # Drain small rejected bodies so Windows does not reset the socket
+            # before the client can receive the rejection response.
+            if not getattr(self,'_body_read',False):
+                try:
+                    length=int(self.headers.get('Content-Length','0'))
+                    if 0<length<=4096:
+                        self.connection.settimeout(.3);self.rfile.read(length)
+                except (ValueError,OSError):pass
+            self.send(400, {'error':str(exc)})
         except Exception as exc: self.send(500, {'error':str(exc)})
 
 

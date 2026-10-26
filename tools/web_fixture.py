@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tests'))
 from test_core import config
 from personalstorage.common import write_json
 from personalstorage.web import make_server
+from personalstorage.credentials import CredentialVault
+from personalstorage.ai import AIManager
 
 with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
     base=Path(tmp); root=base/'library'
@@ -21,6 +23,13 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
     for name,text in [('note.txt','course'),('other.txt','course'),('unknown.txt','<script>window.injected=true</script>')]:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
+    server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
+    if '--ai-fixture' in sys.argv:
+        from test_ai import FakeProvider
+        provider=FakeProvider()
+        server.desktop.credential_vault.save('sk-'+'synthetic-fixture-key'*2)
+        server.desktop.ai_provider_factory=lambda *a,**k:provider
+        with server.desktop.app() as app:AIManager(app,server.desktop.credential_vault).configure({'enabled':True})
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     print(json.dumps({'url':server.desktop.url,'root':str(root),'stop':str(base/'stop')}),flush=True)
     try:
