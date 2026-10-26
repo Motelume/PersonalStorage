@@ -1,6 +1,6 @@
 {
   "schema_version": "3.0",
-  "policy_version": "1.1.0",
+  "policy_version": "1.2.0",
   "description": "通用目录架构和语义分类约定；不含个人任务或实际资料清单。语义规则供AI与人工理解，自动执行仅使用明确的executable_rules。",
   "constraints": {
     "preserve_names": true,
@@ -372,5 +372,21 @@
     "semantic_rules": "classification_rules与subcategory_rules供人工及AI读取，不由程序eval，也不自动发起模型请求",
     "automatic_rules": "只有executable_rules中的明确白名单条件进入自动分类；通用模板保持为空",
     "single_case_decision": "人工或AI给出本次目标与证据后，经绑定内容指纹的计划预览执行；不自动改长期规则"
+  },
+  "shared_package": {
+    "id": "personalstorage.education",
+    "version": "1.2.0",
+    "compatible_schema": "3.0"
+  },
+  "rule_documents": [
+    "_整理规则/通用分类规则.md",
+    "_整理规则/整理规则.md"
+  ],
+  "network_policy": {
+    "core_organizer_offline": true,
+    "ai_review_requires_explicit_selection_and_send": true,
+    "allowed_api_host": "api.deepseek.com",
+    "background_ai_enabled": false,
+    "secret_in_policy": false
   }
 }

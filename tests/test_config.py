@@ -13,10 +13,11 @@ from personalstorage.policy import Policy
 class ConfigurationTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.base=Path(self.temp.name)
-        self.file_patch=patch('personalstorage.config.__file__',str(self.base/'app/personalstorage/config.py'))
+        self.file_patch=patch('personalstorage.config.program_home',return_value=self.base/'app')
         self.file_patch.start()
         self.env_patch=patch.dict(os.environ,{},clear=False);self.env_patch.start()
         os.environ.pop('PERSONALSTORAGE_ROOT',None)
+        os.environ['PERSONALSTORAGE_HOME']=str(self.base/'runtime')
 
     def tearDown(self):
         self.env_patch.stop();self.file_patch.stop();self.temp.cleanup()
@@ -67,7 +68,7 @@ class ConfigurationTests(unittest.TestCase):
         for name in ('01_课程学习','02_项目','03_竞赛'):
             self.assertEqual(list((root/name).iterdir()),[])
         self.assertFalse(any('<' in p.name or '>' in p.name for p in root.rglob('*')))
-        self.assertIn('细分目录规则',(root/'_整理规则/整理规则.md').read_text(encoding='utf-8'))
+        self.assertIn('细分目录规则',(root/'_整理规则/通用分类规则.md').read_text(encoding='utf-8'))
         self.assertTrue(config['classification_rules'])
         self.assertTrue(config['subcategory_rules'])
         self.assertEqual(Policy(root).classify({'name':'lecture.pdf','kind':'file','text':'通用机器学习教材'})['decision'],'review')
@@ -83,3 +84,36 @@ class ConfigurationTests(unittest.TestCase):
             with patch('personalstorage.setup.read_json',return_value=config):
                 with self.assertRaises(SafetyError):setup_library(root)
             self.assertFalse(root.exists())
+
+    def test_machine_root_survives_program_folder_change(self):
+        from personalstorage.config import save_root
+        root=self.base/'data';setup_library(root);save_root(root)
+        with patch('personalstorage.config.program_home',return_value=self.base/'different-program'):
+            self.assertEqual(default_root(),str(root))
+        os.environ['PERSONALSTORAGE_ROOT']=str(self.base/'explicit')
+        self.assertEqual(default_root(),str(self.base/'explicit'))
+
+    def test_machine_state_home_is_separate_from_library(self):
+        from personalstorage.paths import runtime_home
+        from personalstorage.state import State
+        root=self.base/'data';setup_library(root)
+        state=State(root)
+        try:self.assertTrue(state.profile.is_relative_to(runtime_home()));self.assertFalse(state.profile.is_relative_to(root))
+        finally:state.close()
+
+    def test_dot_segments_keep_same_library_identity(self):
+        from personalstorage.service import Application
+        root=self.base/'data';setup_library(root)
+        a=Application(root);a.close()
+        b=Application(root/'00_收件箱'/ '..')
+        try:self.assertEqual(b.root,root)
+        finally:b.close()
+
+    @unittest.skipUnless(os.name=='nt','Windows path case')
+    def test_path_case_does_not_create_a_new_library_identity(self):
+        from personalstorage.service import Application
+        root=self.base/'data';setup_library(root)
+        a=Application(root);identity=a.state.get('identity');a.close()
+        b=Application(str(root).swapcase())
+        try:self.assertEqual(b.state.get('identity'),identity)
+        finally:b.close()

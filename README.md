@@ -11,6 +11,8 @@ Windows 本机资料整理工具。提供收件箱、审核与待办、AI管理�
 
 详见[AI使用说明](docs/ai-guide.md)和[桌面版构建与分发](docs/desktop-guide.md)。
 
+跨电脑使用与规则维护见[稳定架构与复用说明](docs/portability.md)。首次桌面启动可选择或经确认初始化资料目录；默认路径保存在本机状态目录，更新应用不会丢失。
+
 ## 目录架构与分类规则
 
 - [完整目录树、顶层职责、细分规则与判断顺序](personalstorage/templates/classification.md)：供使用者和AI共同阅读。
@@ -47,11 +49,12 @@ Windows 本机资料整理工具。提供收件箱、审核与待办、AI管理�
 
 语义规则供AI或人工理解，程序自动执行仍只采用`executable_rules`白名单。更新仓库不会自动覆盖现有资料库；已有资料库可先对照完整规则，再合并需要的通用约定，保留自己的目录、任务和例外。
 
-资料根目录优先级：命令行`--root` > `PERSONALSTORAGE_ROOT`环境变量 > `.local/config.json`的`root` > `D:\PersonalStorage`。例如：
+资料根目录优先级：`--root` > `PERSONALSTORAGE_ROOT` > `.local/config.json` > 本机已保存选择 > `D:\PersonalStorage`。例如：
 
 ```powershell
 .\run.cmd --root "E:\PersonalStorage" validate
 .\run.cmd --root "E:\PersonalStorage" serve
+.\run.cmd configure-root "E:\PersonalStorage"
 ```
 
 或创建不进入Git的`.local/config.json`：
@@ -59,6 +62,8 @@ Windows 本机资料整理工具。提供收件箱、审核与待办、AI管理�
 ```json
 {"root":"E:\\PersonalStorage"}
 ```
+
+通用规则升级先运行`run.cmd rules-status`或`run.cmd rules-update`预览，再用`run.cmd rules-update --approve`应用。它会备份并保留私人任务、执行条件和已修改字段，不重排原资料。
 
 命令行必须在仓库目录运行。也可用`pip install -e .`安装本机命令`personalstorage`。
 

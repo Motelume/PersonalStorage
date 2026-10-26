@@ -61,4 +61,4 @@ perform=async function(action){
  return originalPerform(action);
 };
 const originalRefreshStatus=refreshStatus;
-refreshStatus=async function(){await originalRefreshStatus();const node=$('.local');if(node)node.innerHTML='<i></i> 本机模式 · '+(S.boot.model_enabled?'DeepSeek已启用':'AI未启用');};
+refreshStatus=async function(){await originalRefreshStatus();const node=$('.local');if(node)node.innerHTML='<i></i> 本机模式 · '+(S.boot.model_enabled?'DeepSeek已启用':'AI未启用');const version=$('.sidebar-bottom small');if(version&&S.boot.app_version)version.textContent='v'+S.boot.app_version+' · 本机工作空间';};

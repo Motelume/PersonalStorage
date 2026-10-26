@@ -1,11 +1,12 @@
 from pathlib import Path
 import sqlite3, os, json
 from .common import digest,now,uid,SafetyError,write_json
+from .paths import canonical_root,runtime_home
 
 class State:
     def __init__(self,root,profile=None):
-        self.root=Path(root).absolute()
-        self.profile=Path(profile) if profile else Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'AppData/Local')))/'PersonalStorage'/digest(str(self.root).casefold())[:16]
+        self.root=canonical_root(root)
+        self.profile=Path(profile) if profile else runtime_home()/digest(str(self.root).casefold())[:16]
         if self.profile.absolute().is_relative_to(self.root): raise SafetyError('运行数据库必须位于资料库之外')
         self.profile.mkdir(parents=True,exist_ok=True)
         self.db=sqlite3.connect(self.profile/'state.sqlite3',timeout=10)
@@ -26,8 +27,12 @@ class State:
         ''')
         identity={'root':str(self.root),'volume':self.root.stat().st_dev,'schema_version':1}
         old=self.get('identity')
-        if old and old!=identity: raise SafetyError('资料库根、卷身份或数据库schema不匹配')
-        self.set('identity',identity)
+        if old and old!=identity:
+            try:same_root=os.path.samefile(old['root'],self.root)
+            except (OSError,KeyError):same_root=False
+            if not same_root or {k:v for k,v in old.items() if k!='root'}!={k:v for k,v in identity.items() if k!='root'}:
+                raise SafetyError('资料库根、卷身份或数据库schema不匹配')
+        self.set('identity',old or identity)
 
     def get(self,key,default=None):
         row=self.db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()

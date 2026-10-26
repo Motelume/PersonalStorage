@@ -6,10 +6,11 @@ from .planner import build_plan
 from .executor import execute
 from .recovery import recover
 from . import reports
+from .paths import canonical_root
 
 class Application:
     def __init__(self,root,profile=None):
-        self.root=Path(root).absolute(); self.policy=Policy(self.root); self.state=State(self.root,profile)
+        self.root=canonical_root(root); self.policy=Policy(self.root); self.state=State(self.root,profile)
     def plan(self,**options): return build_plan(self.root,self.state,self.policy,**options)
     def execute(self,plan_id): return execute(self.root,self.state,self.policy,plan_id)
     def recover(self): return recover(self.root,self.state,self.policy)

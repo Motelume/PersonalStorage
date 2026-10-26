@@ -12,6 +12,9 @@ def main(argv=None):
     p.add_argument('--root',default=default_root()); p.add_argument('--profile')
     sub=p.add_subparsers(dest='command',required=True)
     sub.add_parser('setup',help='从通用模板创建空资料库，不覆盖已有规则')
+    s=sub.add_parser('configure-root',help='记录这台电脑的默认资料目录，不移动文件');s.add_argument('path')
+    sub.add_parser('rules-status',help='只读检查通用规则包和本机配置差异')
+    s=sub.add_parser('rules-update',help='默认预览；只更新未被本机改动的通用字段，保留私人规则');s.add_argument('--approve',action='store_true')
     sub.add_parser('init'); sub.add_parser('validate'); sub.add_parser('status'); sub.add_parser('pending'); sub.add_parser('recover'); sub.add_parser('operations')
     s=sub.add_parser('check'); s.add_argument('--full-hash',action='store_true')
     s=sub.add_parser('plan'); s.add_argument('--include-root',action='store_true'); s.add_argument('--include-review',action='store_true'); s.add_argument('--source',action='append'); s.add_argument('--allow-existing',action='store_true'); s.add_argument('--allow-archived',action='store_true'); s.add_argument('--decisions'); s.add_argument('--approve-decisions',action='store_true'); s.add_argument('--stable-seconds',type=float,default=1)
@@ -36,12 +39,19 @@ def main(argv=None):
             from .setup import setup_library
             print(json.dumps(setup_library(a.root),ensure_ascii=False,indent=2))
             return 0
+        if a.command=='configure-root':
+            from .config import save_root
+            print(json.dumps({'root':save_root(a.path),'original_files_touched':False},ensure_ascii=False,indent=2))
+            return 0
         if a.command=='serve':
             from .web import serve
             serve(a.root,a.profile,a.port,not a.no_browser)
             return 0
         app=Application(a.root,a.profile); state=app.state; c=a.command
-        if c=='validate': result={'valid':True,'policy_version':app.policy.data['policy_version'],'policy_hash':app.policy.hash}
+        if c in ('rules-status','rules-update'):
+            from .rule_package import preview,update
+            result=update(app) if c=='rules-update' and a.approve else preview(app)
+        elif c=='validate': result={'valid':True,'policy_version':app.policy.data['policy_version'],'policy_hash':app.policy.hash}
         elif c=='init': result=baseline(app.root,state)
         elif c=='status': result=app.status()
         elif c=='pending': result=reports.pending(state)

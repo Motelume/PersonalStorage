@@ -20,6 +20,7 @@ from . import reports
 from .recovery import undo
 from .review import resolve_external, review_context
 from .ai import AIManager
+from . import __version__
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -87,7 +88,7 @@ class Desktop:
             s.update(watching=bool(self.watch and self.watch.is_alive()), watch_error=self.watch_error)
             auth = app.state.get('automation')
             ai = AIManager(app, vault=self.credential_vault).status()
-            return {'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash, 'ai':ai,'ui_mode':'desktop' if getattr(self,'native_mode',False) else 'web',
+            return {'app_version':__version__,'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash, 'ai':ai,'ui_mode':'desktop' if getattr(self,'native_mode',False) else 'web',
                     'authorization_current': bool(auth and auth['policy_hash'] == app.policy.hash),
                     'authorization_scope_root': bool(auth and auth.get('include_root')),
                     'model_enabled': ai['settings']['enabled'] and ai['configured']}

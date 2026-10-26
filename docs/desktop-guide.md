@@ -6,7 +6,9 @@
 
 运行打包目录中的`PersonalStorage.exe`。整个目录一起保留，不能只复制exe而丢弃`_internal`。打包版已带Python运行时和PDF提取组件，不要求目标电脑安装Python；仍需要Windows及WebView2 Runtime。
 
-默认资料根目录为`D:/PersonalStorage`。可以用`--root`、`PERSONALSTORAGE_ROOT`环境变量或程序旁不进入Git的`.local/config.json`选择其他位置。资料库必须已有规则；源码CLI的`setup`可从通用模板新建空资料库。
+默认资料根目录为`D:/PersonalStorage`。不可用时会弹出首次目录选择器，可选择现有资料库或经明确确认初始化通用架构。菜单“设置”可选择下次启动的目录，`--choose-root`可强制重选。本机默认选择保存在用户状态目录，与程序位置和版本分离。
+
+`--root`、`PERSONALSTORAGE_ROOT`及程序旁`.local/config.json`仍可显式覆盖。源码CLI也可用`setup`新建空资料库，`configure-root`记住这台电脑的路径。详见[跨电脑复用](portability.md)。
 
 应用窗口与本机服务同生命周期，关闭应用会请求停止后台；已经进入的操作或审核会完成收尾后退出。网页版独立启动时关闭网页不会关闭服务。同一资料库的文件执行与AI审核通过进程间锁协调。
 

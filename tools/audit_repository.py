@@ -22,8 +22,8 @@ def allowed(name):
     if len(p.parts) == 2 and p.parts[0] in ('personalstorage', 'tests') and p.suffix == '.py': return True
     if name in ('personalstorage/web_static/index.html', 'personalstorage/web_static/app.js',
                 'personalstorage/web_static/app.css','personalstorage/web_static/ai.js', 'personalstorage/templates/AGENTS.md',
-                'personalstorage/templates/classification.md', 'personalstorage/templates/classification-config.json',
-                'schemas/review-result.schema.json', 'docs/architecture.md','docs/ai-guide.md','docs/desktop-guide.md',
+                'personalstorage/templates/classification.md','personalstorage/templates/local-rules.md', 'personalstorage/templates/classification-config.json',
+                'schemas/review-result.schema.json', 'docs/architecture.md','docs/ai-guide.md','docs/desktop-guide.md','docs/portability.md',
                 '.github/workflows/tests.yml', 'tools/audit_repository.py',
                 'tools/frontend_smoke.cjs','tools/frontend_ai_smoke.cjs', 'tools/web_fixture.py','tools/desktop_entry.py','tools/build_desktop.py'): return True
     return False

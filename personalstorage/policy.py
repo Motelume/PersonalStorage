@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 from .common import read_json,digest,relpath,safe_path,SafetyError
+from .paths import canonical_root
 
 REQUIRED_CONSTRAINTS=('preserve_names','preserve_content','no_delete','no_overwrite','no_dedup','same_volume_only','preserve_bundles','no_network')
 FIELDS={'name','text','kind','context.task_id','context.purpose'}
@@ -8,7 +9,7 @@ OPS={'equals','contains','regex','in'}
 
 class Policy:
     def __init__(self,root):
-        self.root=Path(root).absolute()
+        self.root=canonical_root(root)
         self.data=read_json(self.root/'_整理规则/分类配置.json')
         self.validate()
         self.hash=digest(self.data)

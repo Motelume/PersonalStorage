@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 from contextlib import closing
 from .common import SafetyError
+from .paths import runtime_home
 
 
 class Blob(ctypes.Structure):
@@ -35,7 +36,7 @@ def protect(data, decrypt=False):
 
 class CredentialVault:
     def __init__(self, path=None):
-        self.path = Path(path) if path else Path(os.environ.get('LOCALAPPDATA', Path.home()))/'PersonalStorage'/'credentials.sqlite3'
+        self.path = Path(path) if path else runtime_home()/'credentials.sqlite3'
 
     def configured(self):
         if not self.path.is_file(): return False
