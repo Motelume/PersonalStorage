@@ -25,6 +25,13 @@ class FakeProvider:
         self.usage={'prompt_tokens':40,'completion_tokens':20,'total_tokens':60}
         self.mutate=mutate;self.decision=decision;self.bad_target=bad_target;self.calls=0
     def test(self):return {'connected':True,'models':['deepseek-flash']}
+    def design(self,kind,request):
+        self.calls+=1
+        targets=request['candidate_targets']
+        if kind=='rules':
+            target=next(t for t in targets if t['path']=='01_课程学习/测试课程')
+            return {'rules':[{'title':'合成AI规则候选','all':[{'field':'text','op':'contains','value':'course'}],'target_id':'unknown' if self.bad_target else target['id'],'level':100,'reason':'合成测试，仅生成待确认候选'}]}
+        return {'links':[{'source_id':targets[0]['id'],'target_id':targets[-1]['id'],'reason':'合成跨目录关联建议'}]}
     def review(self,request):
         self.calls+=1
         if self.mutate:self.mutate()

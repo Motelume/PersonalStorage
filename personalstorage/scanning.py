@@ -31,10 +31,12 @@ def metadata(path):
     return {'fingerprint':digest(sorted(entries)),'kind':entries[0][1],'file_count':files}
 
 
-def scan(root,policy,cache,*,include_root=False,stable_seconds=1,progress=None):
+def scan(root,policy,cache,*,include_root=False,stable_seconds=1,progress=None,context=None):
     root=Path(root);sources=discover(root,include_root)
     first={};errors={};started=time.monotonic()
     for source in sources:
+        from .tasks import checkpoint
+        checkpoint()
         try:
             if not in_scope(source,include_root):raise SafetyError('源不在本次授权范围')
             first[source]=metadata(safe_path(root,source))
@@ -48,13 +50,13 @@ def scan(root,policy,cache,*,include_root=False,stable_seconds=1,progress=None):
             path=safe_path(root,source);current=metadata(path)
             if current!=first[source]:raise SafetyError('文件仍在变化')
             if not current['file_count']:raise SafetyError('空文件夹保持原位')
-            key=(source,current['fingerprint'],policy.hash,extractor_signature)
+            key=(source,current['fingerprint'],policy.hash,extractor_signature,digest(context or {}))
             cached=cache.get(key)
             features=cached if cached is not None else extract(path)
             if cached is None:
                 if metadata(path)!=current:raise SafetyError('读取时源文件变化')
                 if features.get('ocr',{}).get('status') not in ('error','timeout','unavailable'):cache[key]=features
-            decision=policy.classify(features)
+            decision=policy.classify(features,context)
             row={'source':source,'kind':current['kind'],'file_count':current['file_count'],
                  'text_source':features.get('text_source','native' if features.get('text') else 'none'),'ocr':({**features['ocr'],'cache_hit':True} if cached is not None and features.get('ocr') else features.get('ocr')),'scan_fingerprint':current['fingerprint'],'integrity':'metadata_only','decision':decision['decision']}
             if decision['decision']=='review':
@@ -64,8 +66,14 @@ def scan(root,policy,cache,*,include_root=False,stable_seconds=1,progress=None):
                 row.update(decision);row['target']=policy.target(decision['target_parent'],path.name,review=False)
             return row,cached is not None
         except (OSError,SafetyError) as exc:return {'source':source,'decision':'skip','reason':str(exc)},False
+    from .tasks import current_stop,scope
+    event=current_stop()
+    def scoped_inspect(source):
+        with scope(event):return inspect(source)
     with ThreadPoolExecutor(max_workers=4,thread_name_prefix='inbox-read') as pool:
-        for index,(row,hit) in enumerate(pool.map(inspect,sources),1):
+        for index,(row,hit) in enumerate(pool.map(scoped_inspect,sources),1):
+            from .tasks import checkpoint
+            checkpoint()
             hits+=hit;target=row.get('target')
             if target:
                 if target==row['source']:row.update(decision='skip',reason='已在目标位置')

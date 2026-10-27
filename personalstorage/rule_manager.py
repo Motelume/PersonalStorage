@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from .common import SafetyError,digest,now,uid,write_json,read_json,safe_path,instance_lock,manifest,linked
 from .policy import Policy,FIELDS,OPS
+from .conditions import expression,leaves
 
 KEY='rule_manager'
 EDITABLE=('categories','subcategory_rules','classification_rules','explicit_preferences','tasks','executable_rules')
@@ -173,8 +174,8 @@ class RuleManager:
                 rule=row['rule'];ident=rule['id'];allids.append(ident)
                 # Disabled definitions must remain valid, but unavailable destinations may be retained.
                 Policy.from_data(self.root,{**config,'executable_rules':[rule]})
-                if len(rule['all'])>20:raise SafetyError('每条规则最多20个条件')
-                for c in rule['all']:
+                conditions_list=leaves(expression(rule))
+                for c in conditions_list:
                     if c['op']=='contains' and not c['value'].strip():raise SafetyError('包含条件不能为空')
                     if len(json.dumps(c,ensure_ascii=False))>17000:raise SafetyError('条件值超过预算')
                 try:
@@ -183,10 +184,10 @@ class RuleManager:
                 except (SafetyError,OSError) as exc:
                     (errors if row['enabled'] else warnings).append(f"{ident}：{exc}")
                 if row['enabled']:
-                    key=digest([rule['all'],rule.get('level',100)])
+                    key=digest([expression(rule),rule.get('level',100)])
                     if key in conditions and conditions[key]!=rule['target_parent']:errors.append(f'{ident}：相同条件和层级却指向不同目标')
                     conditions[key]=rule['target_parent']
-                    if all(c['field'] in ('name','kind') for c in rule['all']):warnings.append(f'{ident}：仅依据名称或类型，需用样本检查归属是否充分')
+                    if all(c['field'] in ('name','kind','extension') for c in conditions_list):warnings.append(f'{ident}：仅依据名称或类型，需用样本检查归属是否充分')
             if len(allids)!=len(set(allids)):raise SafetyError('启用与停用规则的ID都必须唯一')
             ids=set()
             for task in config.get('tasks',[]):

@@ -6,7 +6,10 @@ from .common import linked,SafetyError
 
 _OCR_SLOT=threading.BoundedSemaphore(1)
 
-def signature():return ocr.signature()
+def signature():
+    from .recognition import home
+    cache=home()/'results.sqlite3'
+    return ocr.signature()+(':enhanced-'+str(cache.stat().st_mtime_ns) if cache.exists() else '')
 
 def _extract_local(path,limit=16000):
     p=Path(path); result={'name':p.name,'kind':'directory' if p.is_dir() else 'file','text':'','complete':False,'warnings':[]}
@@ -14,6 +17,9 @@ def _extract_local(path,limit=16000):
         if p.is_dir():
             result['members']=[str(x.relative_to(p)) for x in p.iterdir()][:80]
             result['warnings'].append('完整目录保持整体，未递归解析正文')
+        elif p.suffix.lower() in __import__('personalstorage.extra_formats',fromlist=['FORMATS']).FORMATS:
+            from .extra_formats import read
+            return read(p,limit)
         elif p.suffix.lower() in ('.txt','.md','.csv','.json'):
             with p.open('rb') as f: raw=f.read(limit*4+1)
             result['text']=raw.decode('utf-8-sig',errors='replace')[:limit]
@@ -47,15 +53,16 @@ def _extract_local(path,limit=16000):
     return result
 
 def _worker(p,limit,timeout,options=None):
+    from .processes import run as run_process
     environment=dict(os.environ)
     if options is not None:environment['PERSONALSTORAGE_OCR_JOB_SETTINGS']=json.dumps(options)
     if getattr(sys,'frozen',False):
         with tempfile.TemporaryDirectory(prefix='personalstorage-extract-') as folder:
             output=Path(folder)/'extracted.json'
-            done=subprocess.run([sys.executable,'--extract-worker',str(p),str(limit),str(output)],env=environment,capture_output=True,timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+            done=run_process([sys.executable,'--extract-worker',str(p),str(limit),str(output)],check=False,env=environment,capture_output=True,timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
             if done.returncode or not output.is_file():raise ValueError('只读解析子进程失败')
             return json.loads(output.read_text(encoding='utf-8'))
-    done=subprocess.run([sys.executable,'-X','utf8','-m','personalstorage.extraction','--worker',str(p),str(limit)],env=environment,cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8',timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+    done=run_process([sys.executable,'-X','utf8','-m','personalstorage.extraction','--worker',str(p),str(limit)],check=False,env=environment,cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8',timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
     if done.returncode:raise ValueError('只读解析子进程失败')
     return json.loads(done.stdout)
 
@@ -77,8 +84,15 @@ def _trim(result,p,limit,hit=False):
 
 def extract(path,limit=16000,timeout=None,*,force=False,options=None,use_cache=True):
     p=Path(path).absolute()
-    limit=max(1,min(16000,limit));candidate=p.suffix.lower() in ocr.IMAGES|{'.pdf'} and not p.is_dir()
-    if p.is_dir() or (not candidate and p.suffix.lower() not in ('.docx','.pptx','.xlsx','.zip')):
+    limit=max(1,min(16000,limit))
+    if p.is_file():
+        from .recognition import home,cached
+        if (home()/'results.sqlite3').exists():
+            approved=cached(p)
+            if approved is not None:return {**approved,'text':approved['text'][:limit]}
+    candidate=p.suffix.lower() in ocr.IMAGES|{'.pdf'} and not p.is_dir()
+    from .extra_formats import FORMATS
+    if p.is_dir() or (not candidate and p.suffix.lower() not in {'.docx','.pptx','.xlsx','.zip'}|FORMATS):
         return _extract_local(p,limit)
     fallback={'name':p.name,'kind':'file','text':'','complete':False,'warnings':[]}
     try:

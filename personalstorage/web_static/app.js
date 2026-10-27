@@ -16,8 +16,8 @@ async function api(path,body){const r=await fetch('/api/'+path,{method:body===un
 async function job(action,body={},page=S.page){
  const v=view(page);if(v.job)throw Error('此页面已有任务运行，可以切换到其他页面。');
  v.taskFailed=false;v.job={action,phase:'正在提交本地任务…'};syncTaskUI();
- try{const {job_id}=await api(action,{...body,_page:page});v.job.id=job_id;while(true){const j=await api('jobs/'+job_id);v.job.phase=(j.state==='queued'?'正在排队，前一项任务完成后继续':j.phase)+(j.total?` · 已完成 ${j.completed||0} / ${j.total} 项`:'');syncTaskUI();if(j.state==='error')throw Error(j.error);if(j.state==='done')return j.result;await new Promise(r=>setTimeout(r,250));}}
- catch(error){v.taskFailed=true;note(error.message,true,page);throw error;}
+ try{const {job_id}=await api(action,{...body,_page:page});v.job.id=job_id;while(true){const j=await api('jobs/'+job_id);v.job.phase=(j.state==='queued'?'正在排队，前一项任务完成后继续':j.phase)+(j.total?` · 已完成 ${j.completed||0} / ${j.total} 项`:'');syncTaskUI();if(j.state==='error'){const error=Error(j.error);error.cancelled=j.cancelled;throw error;};if(j.state==='done')return j.result;await new Promise(r=>setTimeout(r,250));}}
+ catch(error){v.taskFailed=!error.cancelled;note(error.message,!error.cancelled,page);throw error;}
  finally{v.job=null;if(S.page!==page)v.unread++;view('history').dirty=true;syncTaskUI();}
 }
 function disableActions(disabled){document.querySelectorAll('button[data-action]').forEach(b=>{if(['close-modal','to-review','ai-page','open-inbox','reveal','copy','history-prev','history-next'].includes(b.dataset.action))return;if(disabled){if(b.dataset.wasDisabled===undefined)b.dataset.wasDisabled=b.disabled?'1':'0';b.disabled=true;}else if(b.dataset.wasDisabled!==undefined){b.disabled=b.dataset.wasDisabled==='1';delete b.dataset.wasDisabled;}});}
@@ -137,7 +137,7 @@ document.addEventListener('click',e=>{
  if(button){const page=S.page,v=view(page),action=button.dataset.action;
   if(action==='close-modal'){closeModal(page);return;}
   if(button.disabled||v.acting||v.job)return;v.acting=true;
-  perform(action,page).catch(error=>note(error.message||String(error),true,page)).finally(()=>{v.acting=false;syncTaskUI();});return;
+  perform(action,page).catch(error=>note(error.message||String(error),!error.cancelled,page)).finally(()=>{v.acting=false;syncTaskUI();});return;
  }
  const row=e.target.closest('[data-row]');if(row&&!S.busy&&!S.acting&&!e.target.matches('input'))focusRow(row.dataset.row);
 });

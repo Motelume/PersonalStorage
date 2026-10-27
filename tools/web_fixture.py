@@ -1,5 +1,6 @@
 """Isolated browser test data. Never points at the user's library."""
 import sys
+import os
 import json
 import tempfile
 import threading
@@ -16,12 +17,16 @@ from personalstorage.ai import AIManager
 
 with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
     base=Path(tmp); root=base/'library'
+    os.environ['PERSONALSTORAGE_HOME']=str(base/'machine')
     if '--ocr-fixture' in sys.argv:
         import os
         os.environ['PERSONALSTORAGE_HOME']=str(base/'machine')
     (root/'00_收件箱').mkdir(parents=True)
     (root/'01_课程学习/测试课程').mkdir(parents=True)
     c=config(); c['executable_rules'][0]['all']=[{'field':'text','op':'contains','value':'course'}]
+    if '--beta-fixture' in sys.argv:
+        c['tasks']=[{'id':'sample-task','title':'合成课程任务','path':'01_课程学习/测试课程','storage':'active','lifecycle':'active'}]
+        c['explicit_preferences']=[{'id':'legacy-test','identity':'synthetic legacy preference','destination':'01_课程学习/测试课程','move_as_unit':True,'reason':'test'}]
     if '--rules-fixture' in sys.argv:
         c['explicit_preferences']=[{'id':'legacy-fixture','identity':'synthetic example bundle','destination':'01_课程学习/测试课程','reason':'existing structured preference','move_as_unit':True}]
     write_json(root/'_整理规则/分类配置.json',c)
@@ -56,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
             time.sleep(1.2)
             return original_search(*args,**kwargs)
         overview.search=delayed_search
-    if '--ai-fixture' in sys.argv or '--workspace-fixture' in sys.argv or '--intelligent-fixture' in sys.argv:
+    if '--ai-fixture' in sys.argv or '--workspace-fixture' in sys.argv or '--intelligent-fixture' in sys.argv or '--beta-fixture' in sys.argv:
         from test_ai import FakeProvider
         provider=FakeProvider()
         server.desktop.credential_vault.save('sk-'+'synthetic-fixture-key'*2)

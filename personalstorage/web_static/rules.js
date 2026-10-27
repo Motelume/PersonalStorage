@@ -84,7 +84,7 @@ async function rmTarget(kind){
  }
  await draw();
 }
-async function rmPickSamples(){
+async function rmPickSamples(onDone=null){
  const stack=[];let selected=new Map(RM.samples.map(x=>[x.path,x]));
  async function draw(id,offset=0){
   const data=await api('rules-samples?offset='+offset+(id?'&id='+encodeURIComponent(id):''));
@@ -95,7 +95,7 @@ async function rmPickSamples(){
   $$('[data-rm-sample]').forEach(b=>b.onchange=()=>{const x=data.items.find(x=>x.id===b.dataset.rmSample);if(b.checked){if(selected.size>=10){b.checked=false;note('每次最多10个样本。',true,'settings');return;}selected.set(x.path,x);}else selected.delete(x.path);$('#rm-picked-count').textContent=selected.size;});
   if($('#rm-sample-prev'))$('#rm-sample-prev').onclick=()=>draw(id,Math.max(0,offset-100)).catch(handleError);
   if($('#rm-sample-next'))$('#rm-sample-next').onclick=()=>draw(id,data.next_offset).catch(handleError);
-  $('#rm-sample-use').onclick=()=>{RM.samples=[...selected.values()];closeModal('settings');render();};
+  $('#rm-sample-use').onclick=()=>{RM.samples=[...selected.values()];closeModal('settings');render();if(onDone)onDone(RM.samples);};
  }
  await draw();
 }

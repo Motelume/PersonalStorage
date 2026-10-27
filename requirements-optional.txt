@@ -1,2 +1,7 @@
 # Optional local PDF extraction only. Core commands use Python standard library.
 pypdf
+
+# Bounded read-only legacy/open format parsers
+olefile==0.47
+xlrd==2.0.2
+striprtf==0.0.35

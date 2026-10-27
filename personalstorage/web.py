@@ -37,6 +37,7 @@ class Desktop:
         self.objects = {}
         self.previews = {}
         self.jobs = {}
+        self.job_stops={}
         self.downloads = {}
         self.ai_packets = {}
         self.scan_cache = {}
@@ -116,9 +117,15 @@ class Desktop:
             self.audit_stop.clear()
         ident = uid()
         page=body.get('_page')
-        self.jobs[ident] = {'id': ident, 'state': 'queued', 'phase': '等待处理', 'at': now(), 'page':page}
+        stop_event=threading.Event();self.job_stops[ident]=stop_event
+        safe_retry=action in ('scan','library-audit','wb-index')
+        self.jobs[ident] = {'id': ident, 'state': 'queued', 'phase': '等待处理', 'at': now(), 'page':page,'action':action}
         try:
             with self.app() as app:activity.begin(app.state,ident,action,page)
+            if safe_retry:
+                with self.app() as app:
+                    retries=app.state.get('job_retries',{});retries[ident]={'action':action,'page':page,'at':now(),'owner_pid':os.getpid(),'status':'queued','policy_hash':app.policy.hash,'body':{k:body[k] for k in ('include_root','use_ai','context','max_batches','budget') if k in body}}
+                    app.state.set('job_retries',dict(list(retries.items())[-30:]))
         except BaseException:
             if audit:self.audit_guard.release()
             raise
@@ -127,17 +134,29 @@ class Desktop:
             job.update(state='running', phase='核对与处理')
             outcome={'state':'error','phase':'未完成','error':'任务未正常结束'}
             try:
-                with self.serial, self.app() as app:
+                from .tasks import scope,checkpoint
+                with self.serial, self.app() as app,scope(stop_event):
+                    checkpoint()
                     activity.update(app.state,ident,'running',phase=job['phase'])
                     result = self.perform(app, action, body, job)
                     activity.update(app.state,ident,'done',phase='已完成',result=result)
                 outcome={'state':'done','phase':'已完成','result':result}
             except Exception as exc:
                 outcome={'state':'error','phase':'未完成','error':str(exc)}
+                from .tasks import Cancelled
+                if isinstance(exc,Cancelled):outcome.update(cancelled=True,phase='已停止')
                 try:
                     with self.app() as app:activity.update(app.state,ident,'error',phase='未完成',error=str(exc))
                 except Exception:outcome['error']+='；本次任务记录未能保存'
             finally:
+                if safe_retry:
+                    try:
+                        with self.app() as app:
+                            retries=app.state.get('job_retries',{})
+                            if ident in retries:
+                                retries[ident]['status']='completed' if outcome['state']=='done' else 'interrupted';app.state.set('job_retries',retries)
+                    except Exception:pass
+                self.job_stops.pop(ident,None)
                 if audit:self.audit_guard.release()
                 # Once terminal status is visible, records and locks are ready
                 # for an immediate retry from another HTTP request.
@@ -253,6 +272,9 @@ class Desktop:
             {k: v for k, v in a.items() if k != 'manifest'} for a in plan['actions']]}
 
     def perform(self, app, action, b, job):
+        if action.startswith('wb-'):
+            from .workbench import perform
+            return perform(self,app,action,b,job)
         if action.startswith('rules-'):
             manager=RuleManager(app)
             if action=='rules-save':return manager.save(b['model'],b.get('revision'),b.get('base_hash'))
@@ -343,16 +365,18 @@ class Desktop:
                 return self.perform(app,'preview',{'ids':[b['id']],'target_id':self.object(parent,directory=True),
                     'evidence':'用户采用AI建议：'+result.get('reason','')},job)
         if action == 'scan':
+            context=b.get('context') or {}
+            if set(context)-{'task_id','purpose'} or any(not isinstance(v,str) or len(v)>2000 for v in context.values()):raise SafetyError('本次投递上下文无效')
             scan_started=time.monotonic()
             job['phase'] = '读取收件箱与必要的本地文字识别，生成建议'
             def progress(completed,total):job.update(completed=completed,total=total)
-            result=scanning.scan(app.root,app.policy,self.scan_cache,include_root=b.get('include_root') is True,progress=progress) if inboxes.settings(app.state)['internal_enabled'] else {'rows':[],'scanned_at':now(),'elapsed_ms':0}
-            external=inboxes.scan_external(app.root,app.state,app.policy,self.scan_cache)
+            result=scanning.scan(app.root,app.policy,self.scan_cache,include_root=b.get('include_root') is True,progress=progress,context=context) if inboxes.settings(app.state)['internal_enabled'] else {'rows':[],'scanned_at':now(),'elapsed_ms':0}
+            external=inboxes.scan_external(app.root,app.state,app.policy,self.scan_cache,context=context)
             result['rows'].extend(external['rows']);result.update(source_errors=external['source_errors'],already_imported=external['already_imported'])
             rows = [];objects=[]
             for a in result['rows']:
                 ident = self.object(a['source'], fingerprint=None, scan_fingerprint=a.get('scan_fingerprint'), action=a,
-                                    policy_hash=app.policy.hash, include_root=b.get('include_root') is True)
+                                    policy_hash=app.policy.hash, include_root=b.get('include_root') is True,context=context)
                 rows.append({'id':ident,**a})
                 objects.append(self.get(ident))
             if b.get('use_ai') is True:
@@ -404,9 +428,10 @@ class Desktop:
                             'manifest_hash':fingerprint,'evidence':str(b.get('evidence',''))[:2000] if manual else obj['action']['evidence']}
             parts=[]
             if internal:
+                if len({digest(o.get('context',{})) for o in internal})>1:raise SafetyError('不同任务上下文的资料请分别预览')
                 plan=app.plan(sources=[o['path'] for o in internal],include_root=manual or any(o.get('include_root') for o in internal),
                     include_review=manual or any(o.get('review_id') for o in internal),allow_existing=manual or any(o.get('review_id') for o in internal),
-                    decisions=decisions,approve_decisions=bool(decisions))
+                    decisions=decisions,approve_decisions=bool(decisions),context=internal[0].get('context'))
                 expected='review' if waiting else 'move'
                 for obj,item in zip(internal,plan['actions']):
                     if item['decision']!=expected:raise SafetyError('计划中有冲突或尚未确定的归属')
@@ -532,6 +557,7 @@ class Desktop:
     def close(self):
         self.stop.set()
         self.audit_stop.set()
+        for event in self.job_stops.values():event.set()
         for event in list(self.search_stops.values()):event.set()
         self.read_pool.shutdown(wait=True)
         if self.watch: self.watch.join()
@@ -574,6 +600,9 @@ class Handler(BaseHTTPRequestHandler):
                 with d.app() as app:result=inboxes.listing(app.root,app.state)
             elif url.path=='/api/rules':
                 with d.app() as app:result=RuleManager(app).status()
+            elif url.path=='/api/workbench':
+                from .workbench import status
+                with d.app() as app:result=status(app)
             elif url.path=='/api/rules-samples':result=d.rule_samples(q.get('id',[None])[0],int(q.get('offset',['0'])[0]))
             elif url.path=='/api/overview':
                 with d.app() as app:result={'preferences':overview.preferences(app.state),'links':d.graph_links(app),'root':d.graph_node(overview.describe(app.root,''))}
@@ -600,10 +629,11 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js','/rules.js','/rules.css'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js','/rules.js','/rules.css','/workbench.js','/workbench.css'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
                 types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8','management.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
                 types.update({'overview.js':'text/javascript; charset=utf-8','overview.css':'text/css; charset=utf-8','ocr.js':'text/javascript; charset=utf-8'})
+                types.update({'workbench.js':'text/javascript; charset=utf-8','workbench.css':'text/css; charset=utf-8'})
                 types.update({'rules.js':'text/javascript; charset=utf-8','rules.css':'text/css; charset=utf-8'})
                 return self.send(200, (STATIC / name).read_bytes(), types[name])
             else: return self.send(404, {'error':'页面不存在'})
@@ -629,6 +659,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, {'stopping':True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
+            elif action=='task-stop':
+                event=d.job_stops.get(b.get('id'))
+                if not event:raise SafetyError('任务已结束或不属于当前服务')
+                event.set()
+                if d.jobs.get(b.get('id'),{}).get('action')=='library-audit':d.audit_stop.set()
+                result={'stop_requested':True,'safe_boundary':True}
+            elif action=='task-resume':
+                with d.app() as app:
+                    record=app.state.get('job_retries',{}).get(b.get('id'))
+                    if not record or record['action'] not in ('scan','library-audit','wb-index'):raise SafetyError('此任务需要重新预览，不能直接继续')
+                    if record['policy_hash']!=app.policy.hash:raise SafetyError('规则已变化，请重新发起任务')
+                    if any(j.get('state') in ('queued','running') for j in d.jobs.values()):raise SafetyError('请先等待当前服务任务结束')
+                    from .tasks import alive
+                    if record['status']=='queued' and alive(record.get('owner_pid',0)):raise SafetyError('原任务仍在另一窗口运行，请先停止')
+                    data={**record['body'],'_page':record['page'],'confirmed':True}
+                result=d.job(record['action'],data)
             elif action=='audit-stop':d.audit_stop.set();result={'stop_requested':True,'current_batch_will_finish':True}
             elif action=='overview-search':result=d.graph_search(b)
             elif action=='overview-stop':
@@ -658,7 +704,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not target.is_dir(): raise SafetyError('目录不存在')
                 os.startfile(str(target))
                 result = {'opened':True}
-            elif action in {'rules-save','rules-reset','rules-rebase','rules-validate','rules-simulate','rules-preview','rules-publish','rules-reading','ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute','ocr-configure','ocr-clear-cache','ocr-test'}:
+            elif action.startswith('wb-') or action in {'rules-save','rules-reset','rules-rebase','rules-validate','rules-simulate','rules-preview','rules-publish','rules-reading','ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute','ocr-configure','ocr-clear-cache','ocr-test'}:
                 result = d.job(action, b)
             else: raise SafetyError('未知操作')
             self.send(200, result)
@@ -675,9 +721,18 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc: self.send(500, {'error':str(exc)})
 
 
+class LocalServer(ThreadingHTTPServer):
+    allow_reuse_address=False
+    def server_bind(self):
+        import socket
+        if hasattr(socket,'SO_EXCLUSIVEADDRUSE'):self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+        super().server_bind()
+
+
 def make_server(root, profile=None, port=0):
     desktop = Desktop(root, profile)
-    server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    try:server = LocalServer(('127.0.0.1', port), Handler)
+    except BaseException:desktop.close();raise
     server.daemon_threads = True
     server.desktop = desktop
     desktop.url = 'http://127.0.0.1:' + str(server.server_port)
@@ -685,7 +740,18 @@ def make_server(root, profile=None, port=0):
 
 
 def serve(root, profile=None, port=0, open_browser=True):
-    server = make_server(root, profile, port)
+    try:server = make_server(root, profile, port)
+    except OSError as exc:
+        if not port:raise
+        import urllib.request
+        try:
+            url='http://127.0.0.1:'+str(port)
+            with urllib.request.urlopen(url+'/api/bootstrap',timeout=2) as response:existing=json.load(response)
+            if Path(existing['status']['root']).resolve()!=Path(root).resolve():raise SafetyError('该端口被另一个资料库或程序占用，请选择其他端口')
+            print('该资料库网页已在运行：'+url+'，版本 '+existing['app_version'],flush=True)
+            if open_browser:webbrowser.open(url)
+            return
+        except (OSError,ValueError,KeyError):raise SafetyError('端口已占用，请检查已有实例或选择其他端口') from exc
     print('PersonalStorage ' + server.desktop.url, flush=True)
     print('关闭此服务窗口将停止界面与后台轮询；浏览器关闭不会停止服务。Ctrl+C退出。', flush=True)
     if open_browser: webbrowser.open(server.desktop.url)

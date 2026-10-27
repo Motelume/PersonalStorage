@@ -1,0 +1,7 @@
+{
+  "channel": "prerelease",
+  "user_approved_1_0": false,
+  "audience": "Public GitHub repository, shared personally with classmates and friends",
+  "promotion": false,
+  "approval_required_for": "Any version with major >= 1"
+}

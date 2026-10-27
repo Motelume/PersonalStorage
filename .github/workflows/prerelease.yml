@@ -1,0 +1,78 @@
+name: Build and verify personal beta
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+        description: Publish a GitHub prerelease after all checks pass
+permissions:
+  contents: read
+jobs:
+  beta:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install build and test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install -r requirements-desktop.txt
+          npm install --prefix "$env:RUNNER_TEMP\ps-playwright" playwright@1.62.1
+      - name: Version approval gate and unit tests
+        run: |
+          python -X utf8 tools/release_gate.py
+          python -X utf8 -W error::ResourceWarning -m unittest discover -s tests -q
+      - name: Browser regression gates
+        shell: pwsh
+        run: |
+          $env:NODE_PATH="$env:RUNNER_TEMP\ps-playwright\node_modules"
+          $env:PYTHON=(Get-Command python).Source
+          $scripts=@('frontend_smoke.cjs','frontend_ai_smoke.cjs','frontend_workspace_smoke.cjs','frontend_intelligent_smoke.cjs','frontend_overview_smoke.cjs','frontend_ocr_smoke.cjs','frontend_rules_smoke.cjs','frontend_beta_smoke.cjs')
+          foreach($script in $scripts){node (Join-Path tools $script); if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}}
+      - name: Build portable and installer packages
+        run: python -X utf8 tools/build_release.py
+      - name: Native installation and uninstall acceptance
+        run: python -X utf8 tools/release_acceptance.py
+      - name: Synthetic quality and performance acceptance
+        run: python -X utf8 tools/evaluate_quality.py .local/quality-acceptance.json
+      - name: Public source audit
+        run: python -X utf8 tools/audit_repository.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PersonalStorage-verified-beta
+          path: |
+            .local/release-*/*.exe
+            .local/release-*/*.zip
+            .local/release-*/SHA256SUMS.txt
+            .local/release-*/acceptance.json
+            .local/quality-acceptance.json
+          if-no-files-found: error
+  publish:
+    if: inputs.publish
+    needs: beta
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: PersonalStorage-verified-beta
+          path: release-assets
+      - name: Publish prerelease only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version=python tools/release_gate.py
+          $files=Get-ChildItem release-assets -Recurse -File | Where-Object {$_.Extension -in '.exe','.zip' -or $_.Name -eq 'SHA256SUMS.txt'}
+          gh release create "v$version" --prerelease --target "$env:GITHUB_SHA" --title "PersonalStorage $version beta" --notes-file docs/beta-release-notes.md @($files.FullName)

@@ -13,6 +13,18 @@ class Application:
     def __init__(self,root,profile=None):
         self.root=canonical_root(root);self.state=State(self.root,profile)
         try:
+            if (self.state.profile/'restore-journal.json').is_file():
+                from .backup import recover_restore
+                from .common import instance_lock
+                try:
+                    with instance_lock(self.state.profile):recover_restore(self.root,self.state)
+                except SafetyError:pass
+            if self.state.get('task_rename_journal'):
+                from .lifecycle import recover as recover_task
+                from .common import instance_lock
+                try:
+                    with instance_lock(self.state.profile):recover_task(self.root,self.state)
+                except SafetyError:pass
             if self.state.get('rule_publish_journal'):
                 from .rule_manager import recover
                 from .common import instance_lock

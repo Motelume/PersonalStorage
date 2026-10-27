@@ -109,7 +109,7 @@ def listing(root,state):
     downloads=Path.home()/'Downloads'
     return {'sources':out,'suggested_downloads':str(downloads) if downloads.is_dir() else None,'import_modes':MODES,'default_import_mode':'copy','maximum':20}
 
-def scan_external(root,state,policy,cache,*,progress=None):
+def scan_external(root,state,policy,cache,*,progress=None,context=None):
     rows=[];errors=[];skipped=0;extractor_signature=signature()
     for s in settings(state)['sources']:
         if not s['enabled']:continue
@@ -129,12 +129,12 @@ def scan_external(root,state,policy,cache,*,progress=None):
                         if old['source_metadata']==m['fingerprint'] and target.exists() and metadata(target)['fingerprint']==old['target_metadata']:
                             if s.get('import_mode','copy')=='copy':skipped+=1;continue
                             reuse=old['target']
-                    key=(logical,m['fingerprint'],policy.hash,extractor_signature);features=cache.get(key)
+                    key=(logical,m['fingerprint'],policy.hash,extractor_signature,digest(context or {}));features=cache.get(key)
                     if features is None:
                         features=extract(p)
                         if features.get('ocr',{}).get('status') not in ('error','timeout','unavailable'):cache[key]=features
                     if metadata(p)!=m:raise SafetyError('来源仍在变化，请稍后重试')
-                    decision=policy.classify(features)
+                    decision=policy.classify(features,context)
                     if reuse:decision={'decision':'move','target_parent':str(Path(reuse).parent).replace('\\','/'),'rule_id':'verified_import','evidence':'复用本工具已校验的归档副本，本次仅清理原件'}
                     row={'source':logical,'source_id':s['id'],'source_label':s['label'],'absolute_path':str(p),'kind':m['kind'],'file_count':m['file_count'],
                          'text_source':features.get('text_source','native' if features.get('text') else 'none'),'ocr':features.get('ocr'),'scan_fingerprint':m['fingerprint'],'integrity':'metadata_only','external':True,'import_mode':s.get('import_mode','copy'),'reuse_import_target':reuse,**decision}

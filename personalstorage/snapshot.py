@@ -5,7 +5,7 @@ def management_snapshot(root,state,policy,target):
     target=Path(target); meta=target.with_name(target.name+'.metadata.json')
     if target.exists() or meta.exists(): raise SafetyError('快照或配套说明已存在，不覆盖')
     documents={}
-    for name in ['AGENTS.md','_整理规则/分类配置.json','_整理规则/整理规则.md','_整理规则/执行协议.md','_整理规则/工具使用说明.md','_整理规则/AI整理指令.md']:
+    for name in ['AGENTS.md','_整理规则/分类配置.json','_整理规则/整理规则.md','_整理规则/通用分类规则.md','_整理规则/通用规则版本.json','_整理规则/规则阅读版.md','_整理规则/执行协议.md','_整理规则/工具使用说明.md','_整理规则/AI整理指令.md']:
         p=Path(root)/name
         if p.is_file(): documents[name]=p.read_text(encoding='utf-8-sig')
     state.snapshot(target)

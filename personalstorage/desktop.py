@@ -62,6 +62,9 @@ def main(argv=None):
         selected=choose_library()
         if not selected:return 0
         args.root=selected
+    if not args.self_test_report:
+        from .instance import claim
+        if not claim(args.root):return 0
     server=make_server(args.root,args.profile)
     server.desktop.native_mode=True
     server_thread=threading.Thread(target=server.serve_forever,kwargs={'poll_interval':.2},daemon=True)
@@ -85,6 +88,16 @@ def main(argv=None):
         finished.set();server.desktop.stop.set()
         threading.Thread(target=server.shutdown,daemon=True).start()
     window.events.closed+=closed
+    def closing():
+        if args.self_test_report:return True
+        active=[j for j in server.desktop.jobs.values() if j.get('state') in ('queued','running')]
+        if active:
+            answer=ctypes.windll.user32.MessageBoxW(None,'仍有任务运行。\n\n是否停止后续处理并退出？当前文件操作或API调用将安全结束，已有结果保留。','PersonalStorage',0x21)
+            if answer!=1:return False
+            for event in server.desktop.job_stops.values():event.set()
+            server.desktop.audit_stop.set()
+        return True
+    window.events.closing+=closing
     def observe_service():
         server_thread.join()
         if not finished.is_set():
@@ -154,6 +167,7 @@ def main(argv=None):
                 if window.evaluate_js('document.getElementById("ocr-enabled") !== null'):break
                 time.sleep(.1)
             else:raise SafetyError('OCR设置面板未显示')
+            result['beta_workbench']=window.evaluate_js('typeof WB !== "undefined" && typeof wbRecognitionDialog === "function"')
             result.update(ok=True,**data)
         except Exception as exc:result['error']=str(exc)
         finally:

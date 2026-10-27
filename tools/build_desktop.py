@@ -12,7 +12,7 @@ def collect_ocr_notices():
     bundle=ROOT/'dist/PersonalStorage';target=bundle/'THIRD_PARTY_NOTICES'
     if not bundle.is_dir() or not target.resolve().is_relative_to(bundle.resolve()):raise ValueError('Invalid distribution directory')
     target.mkdir(exist_ok=True);lines=['# OCR dependency notices','', 'System fonts are used locally and are not redistributed.','']
-    packages=('rapidocr','onnxruntime','pypdfium2','opencv-python','numpy','shapely','pyclipper','Pillow','pypdf','PyYAML','omegaconf','requests','tqdm','protobuf','flatbuffers')
+    packages=('rapidocr','onnxruntime','pypdfium2','opencv-python','numpy','shapely','pyclipper','Pillow','pypdf','PyYAML','omegaconf','requests','tqdm','protobuf','flatbuffers','olefile','xlrd','striprtf')
     apache=None
     for name in packages:
         package=distribution(name);folder=target/name;folder.mkdir(exist_ok=True)
@@ -35,6 +35,8 @@ def collect_ocr_notices():
 
 
 def main():
+    from release_gate import validate
+    validate()
     if os.name!='nt':raise SystemExit('Build the desktop app on Windows')
     sys.path.insert(0,str(ROOT))
     from personalstorage import ocr

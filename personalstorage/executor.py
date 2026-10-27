@@ -18,6 +18,8 @@ def execute(root,state,policy,planid,*,crash_hook=None,lock=True):
     if plan['root']!=str(Path(root).absolute()) or plan['policy_hash']!=policy.hash: raise SafetyError('根目录或规则已变化，旧计划失效')
     results=[]
     for a in plan['actions']:
+        from .tasks import checkpoint
+        checkpoint()
         previous=state.db.execute('SELECT status FROM operations WHERE id=?',(a['id'],)).fetchone()
         if previous and previous[0]=='committed': results.append({'source':a['source'],'status':'already_committed'}); continue
         op={**a,'run_id':planid,'policy_hash':policy.hash,'policy_version':policy.data['policy_version'],'rule_fingerprint':policy.decision_fingerprint(a.get('rule_id','')),'scope':plan['scope']}

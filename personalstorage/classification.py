@@ -33,6 +33,8 @@ def fallback(app,manager,rows,objects,job):
     if not config['enabled'] or not manager.vault.configured():report['unprocessed']=len(unknown);report['notice']='AI未启用，未确定资料保留待确认';return report
     pending=[]
     def apply(batch):
+        from .tasks import checkpoint
+        checkpoint()
         if not batch:return
         if manager.status()['calls_today']>=config['daily_limit']:
             report['unprocessed']+=len(batch);report['notice']='达到每日AI上限，其余资料保留待下次处理';return

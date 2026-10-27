@@ -2,9 +2,10 @@ from pathlib import Path
 import re
 from .common import read_json,digest,relpath,safe_path,SafetyError
 from .paths import canonical_root
+from .conditions import expression,leaves,evaluate
 
 REQUIRED_CONSTRAINTS=('preserve_names','preserve_content','no_delete','no_overwrite','no_dedup','same_volume_only','preserve_bundles','no_network')
-FIELDS={'name','text','kind','context.task_id','context.purpose'}
+FIELDS={'name','text','kind','extension','context.task_id','context.purpose'}
 OPS={'equals','contains','regex','in'}
 
 class Policy:
@@ -33,8 +34,8 @@ class Policy:
             if not isinstance(rule.get('level',100),int) or isinstance(rule.get('level'),bool):raise SafetyError('决策层级必须是整数')
             if rule['id'] in ids: raise SafetyError('重复规则ID')
             ids.add(rule['id'])
-            if not isinstance(rule.get('all'),list) or not rule['all']: raise SafetyError('规则必须有明确条件')
-            for c in rule['all']:
+            if 'when' in rule and 'all' in rule:raise SafetyError('不能同时声明旧条件和嵌套条件')
+            for c in leaves(expression(rule)):
                 if set(c)!={'field','op','value'} or c['field'] not in FIELDS or c['op'] not in OPS: raise SafetyError('不支持的规则条件')
                 if c['op']=='regex':
                     if not isinstance(c['value'],str) or len(c['value'])>256: raise SafetyError('正则超限')
@@ -80,6 +81,7 @@ class Policy:
 
     def explain(self,features,context=None):
         f=dict(features)
+        if 'name' in f:f.setdefault('extension',Path(f['name']).suffix.lower())
         f.update({'context.'+k:v for k,v in (context or {}).items()})
         trace={'rules':[],'selected_level':None}
         def done(result):return {**trace,'result':result}
@@ -93,13 +95,13 @@ class Policy:
             return done({'decision':'move','target_parent':task['path'],'rule_id':'context_task','evidence':'本次明确的任务投递上下文'})
         matches=[]
         for rule in self.data['executable_rules']:
-            conditions=[]
+            from .tasks import checkpoint
+            checkpoint()
             try:
-                for c in rule['all']:
-                    conditions.append({**c,'present':c['field'] in f,'matched':self.matches(c,f),'actual':str(f.get(c['field'],''))[:180]})
+                truth,conditions,tree=evaluate(expression(rule),f,self.matches)
             except SafetyError as exc:return done({'decision':'review','reason':str(exc)})
-            matched=all(c['matched'] for c in conditions)
-            trace['rules'].append({'id':rule['id'],'level':rule.get('level',100),'target_parent':rule['target_parent'],'matched':matched,'conditions':conditions})
+            matched=truth is True
+            trace['rules'].append({'id':rule['id'],'level':rule.get('level',100),'target_parent':rule['target_parent'],'matched':matched,'conditions':conditions,'tree':tree})
             if matched:matches.append(rule)
         if not matches: return done({'decision':'review','reason':'无明确可执行规则；需人工或AI复核'})
         # A lower number only selects an explicitly defined decision level.

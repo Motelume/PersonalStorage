@@ -1,6 +1,8 @@
 # Only source, synthetic tests and generic documentation may be tracked.
 /*
 !/.gitignore
+!/LICENSE
+!/release-policy.json
 !/.gitattributes
 !/README.md
 !/SECURITY.md

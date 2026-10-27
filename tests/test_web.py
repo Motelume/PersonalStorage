@@ -61,6 +61,10 @@ class WebTests(unittest.TestCase):
         self.assertFalse(b['status']['watching']);self.assertFalse(b['authorization_current'])
         self.assertEqual(Path(b['status']['profile']), self.base/'profile')
 
+    def test_duplicate_port_is_exclusive_and_existing_service_survives(self):
+        with self.assertRaises(OSError):make_server(self.root,self.base/'other-profile',self.server.server_port)
+        self.assertEqual(self.request('bootstrap')['status']['root'],str(self.root))
+
     def test_rule_draft_preview_publish_and_browser_sample_scope(self):
         original=self.file('note.txt');initial=(self.root/'_整理规则/分类配置.json').read_bytes()
         status=self.request('rules');edit=status['live'];edit['rules'][0]['rule']['all'][0]['value']='new.txt'
