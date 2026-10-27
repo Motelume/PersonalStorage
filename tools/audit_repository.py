@@ -21,11 +21,11 @@ def allowed(name):
     if name in ROOT_FILES: return True
     if len(p.parts) == 2 and p.parts[0] in ('personalstorage', 'tests') and p.suffix == '.py': return True
     if name in ('personalstorage/web_static/index.html', 'personalstorage/web_static/app.js',
-                'personalstorage/web_static/app.css','personalstorage/web_static/ai.js','personalstorage/web_static/management.js', 'personalstorage/templates/AGENTS.md',
+                'personalstorage/web_static/app.css','personalstorage/web_static/ai.js','personalstorage/web_static/management.js','personalstorage/web_static/overview.js','personalstorage/web_static/overview.css', 'personalstorage/templates/AGENTS.md',
                 'personalstorage/templates/classification.md','personalstorage/templates/local-rules.md', 'personalstorage/templates/classification-config.json',
-                'schemas/review-result.schema.json', 'docs/architecture.md','docs/ai-guide.md','docs/desktop-guide.md','docs/portability.md','docs/workspace-guide.md',
+                'schemas/review-result.schema.json', 'docs/architecture.md','docs/ai-guide.md','docs/desktop-guide.md','docs/portability.md','docs/workspace-guide.md','docs/overview-guide.md',
                 '.github/workflows/tests.yml', 'tools/audit_repository.py',
-                'tools/frontend_smoke.cjs','tools/frontend_ai_smoke.cjs','tools/frontend_workspace_smoke.cjs','tools/frontend_intelligent_smoke.cjs', 'tools/web_fixture.py','tools/desktop_entry.py','tools/build_desktop.py'): return True
+                'tools/frontend_smoke.cjs','tools/frontend_ai_smoke.cjs','tools/frontend_workspace_smoke.cjs','tools/frontend_intelligent_smoke.cjs','tools/frontend_overview_smoke.cjs', 'tools/web_fixture.py','tools/desktop_entry.py','tools/build_desktop.py'): return True
     return False
 
 

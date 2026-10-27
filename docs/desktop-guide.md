@@ -39,3 +39,5 @@ dist\PersonalStorage\PersonalStorage.exe --self-test-report .local\native-test-n
 `tools/frontend_workspace_smoke.cjs`另覆盖任务运行时切页、侧栏结果标记、历史分页和独立滚动。
 
 实现依据：[pywebview安装](https://pywebview.flowrl.com/guide/installation.html)、[打包说明](https://pywebview.flowrl.com/guide/freezing.html)。
+
+0.7.0增加关系图与目录树，包含轻微漂浮、手动关联及名称定位。`tools/frontend_overview_smoke.cjs`验收交互、取消/切页、关联失效与状态保留；桌面自检增加七页和两种总览视图。

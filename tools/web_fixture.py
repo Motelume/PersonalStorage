@@ -24,6 +24,16 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
     server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
+    if '--overview-fixture' in sys.argv:
+        from personalstorage import overview
+        for category in c['categories']:(root/category['root']).mkdir(exist_ok=True)
+        for relative in ('02_项目/智能小车/硬件资料','03_竞赛/智能车竞赛','06_资料库/学科资料/控制理论','06_资料库/文档与PPT模板/优秀PPT案例'):(root/relative).mkdir(parents=True,exist_ok=True)
+        (root/'06_资料库/学科资料/控制理论/控制理论笔记.md').write_text('synthetic control notes',encoding='utf-8')
+        original_search=overview.search
+        def delayed_search(*args,**kwargs):
+            time.sleep(1.2)
+            return original_search(*args,**kwargs)
+        overview.search=delayed_search
     if '--ai-fixture' in sys.argv or '--workspace-fixture' in sys.argv or '--intelligent-fixture' in sys.argv:
         from test_ai import FakeProvider
         provider=FakeProvider()

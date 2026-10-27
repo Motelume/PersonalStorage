@@ -17,7 +17,7 @@ async function run(){
  const idle=()=>p.waitForFunction(()=>!S.busy&&!S.acting);
  const nav=async name=>{await p.locator(`nav [data-page=${name}]`).click();await p.waitForTimeout(150);await idle();};
  await p.goto(fixture.url);await p.locator('tbody tr').filter({hasText:'note.txt'}).waitFor();await idle();
- assert.equal(await p.locator('nav button').count(),6);
+ assert.equal(await p.locator('nav button').count(),7);
  await p.getByRole('checkbox',{name:'选择 note.txt',exact:true}).check();
  await p.getByRole('button',{name:'预览已选计划'}).click();await p.locator('dialog[open]').waitFor();
  assert.equal(await p.locator('dialog .preview-item').count(),1);

@@ -21,7 +21,7 @@ from .recovery import undo
 from .review import resolve_external, review_context
 from .ai import AIManager
 from . import __version__
-from . import activity, scanning, inboxes, importing, classification, ai_audit
+from . import activity, scanning, inboxes, importing, classification, ai_audit,overview
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -44,6 +44,8 @@ class Desktop:
         self.credential_vault = None
         self.ai_provider_factory = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='storage-ui')
+        self.read_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='storage-overview')
+        self.search_stops={};self.graph_handles={}
         self.stop = threading.Event()
         self.watch = None
         self.watch_error = None
@@ -70,6 +72,41 @@ class Desktop:
         if not isinstance(ident, str) or ident not in self.objects:
             raise SafetyError('对象已失效，请刷新列表')
         return self.objects[ident]
+
+    def graph_node(self,node):
+        if not node.get('available'):return node
+        key=(node['path'],*node['identity'])
+        ident=self.graph_handles.get(key)
+        if not ident:
+            ident=self.object(node['path'],overview=True,node_identity=node['identity']);self.graph_handles[key]=ident
+        return {**node,'id':ident}
+
+    def graph_links(self,app):
+        return [{**link,'source':self.graph_node(link['source']),'target':self.graph_node(link['target'])} for link in overview.links(app.root,app.state)]
+
+    def graph_children(self,app,ident=None,files=False,offset=0):
+        relative=overview.check_node(app.root,self.get(ident))['path'] if ident else ''
+        data=overview.children(app.root,relative,files,offset)
+        return {**data,'parent':self.graph_node(data['parent']),'nodes':[self.graph_node(n) for n in data['nodes']]}
+
+    def graph_search(self,body):
+        # A separate, cancelable read queue cannot be blocked by model calls or moves.
+        for event in list(self.search_stops.values()):event.set()
+        stop=threading.Event();ident=uid();self.search_stops[ident]=stop
+        self.jobs[ident]={'id':ident,'state':'queued','phase':'等待名称搜索','page':'overview','action':'overview-search'}
+        with self.app() as app:activity.begin(app.state,ident,'overview-search','overview')
+        def run():
+            task=self.jobs[ident];task.update(state='running',phase='搜索名称与路径')
+            try:
+                result=overview.search(self.root,body.get('query'),body.get('files') is True,stop,lambda n:task.update(phase=f'已读取 {n} 个目录项'))
+                result['nodes']=[self.graph_node(n) for n in result['nodes']]
+                with self.app() as app:activity.update(app.state,ident,'done',result=result)
+                task.update(state='done',phase='搜索已停止' if result['stopped'] else '搜索完成',result=result)
+            except Exception as exc:
+                with self.app() as app:activity.update(app.state,ident,'error',error=exc)
+                task.update(state='error',phase='搜索未完成',error=str(exc))
+            finally:self.search_stops.pop(ident,None)
+        self.read_pool.submit(run);return {'job_id':ident}
 
     def job(self, action, body):
         audit=action=='library-audit'
@@ -424,6 +461,8 @@ class Desktop:
     def close(self):
         self.stop.set()
         self.audit_stop.set()
+        for event in list(self.search_stops.values()):event.set()
+        self.read_pool.shutdown(wait=True)
         if self.watch: self.watch.join()
         self.pool.shutdown(wait=True)
 
@@ -462,6 +501,21 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == '/api/operations': result = d.operations()
             elif url.path == '/api/inboxes':
                 with d.app() as app:result=inboxes.listing(app.root,app.state)
+            elif url.path=='/api/overview':
+                with d.app() as app:result={'preferences':overview.preferences(app.state),'links':d.graph_links(app),'root':d.graph_node(overview.describe(app.root,''))}
+            elif url.path=='/api/overview-children':
+                with d.app() as app:result=d.graph_children(app,q.get('id',[None])[0],q.get('files',['false'])[0]=='true',int(q.get('offset',['0'])[0]))
+            elif url.path=='/api/overview-detail':
+                with d.app() as app:
+                    node=overview.check_node(app.root,d.get(q.get('id',[None])[0]));result=d.graph_node(node)
+                    if node['kind']=='directory':
+                        dirs=files=0
+                        with os.scandir(overview.path_at(app.root,node['path'])) as entries:
+                            for entry in entries:
+                                if entry.is_dir(follow_symlinks=False):dirs+=1
+                                else:files+=1
+                                if dirs+files>=10000:break
+                        result.update(directories=dirs,files=files,count_limited=dirs+files>=10000)
             elif url.path == '/api/activity':result=d.history(int(q.get('offset',['0'])[0]),q.get('query',[''])[0],q.get('status',['all'])[0])
             elif url.path == '/api/directories': result = d.directory(q.get('id', [None])[0])
             elif url.path.startswith('/api/jobs/'):
@@ -472,9 +526,10 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
                 types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8','management.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
+                types.update({'overview.js':'text/javascript; charset=utf-8','overview.css':'text/css; charset=utf-8'})
                 return self.send(200, (STATIC / name).read_bytes(), types[name])
             else: return self.send(404, {'error':'页面不存在'})
             self.send(200, result)
@@ -500,6 +555,19 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
             elif action=='audit-stop':d.audit_stop.set();result={'stop_requested':True,'current_batch_will_finish':True}
+            elif action=='overview-search':result=d.graph_search(b)
+            elif action=='overview-stop':
+                event=d.search_stops.get(b.get('id'))
+                if event:event.set()
+                result={'stop_requested':True}
+            elif action in ('overview-preferences','overview-link','overview-unlink','overview-open'):
+                with d.app() as app:
+                    if action=='overview-preferences':result=overview.save_preferences(app.root,app.state,b)
+                    elif action=='overview-link':result=overview.save_link(app.root,app.state,d.get(b.get('source_id')),d.get(b.get('target_id')),b)
+                    elif action=='overview-unlink':result=overview.delete_link(app.state,b.get('id'))
+                    else:
+                        node=overview.check_node(app.root,d.get(b.get('id')));target=overview.path_at(app.root,node['path'])
+                        os.startfile(str(target if node['kind']=='directory' else target.parent));result={'opened':True}
             elif action=='inbox-pick':
                 picker=getattr(d,'folder_picker',None)
                 if not picker:raise SafetyError('网页版请粘贴文件夹绝对路径，桌面版可使用选择器')

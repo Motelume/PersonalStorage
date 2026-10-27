@@ -104,7 +104,16 @@ def main(argv=None):
                 time.sleep(.1)
             else:raise SafetyError('桌面页面未完成加载')
             data=window.evaluate_js('({version:S.boot.app_version,root:S.boot.status.root,mode:S.boot.ui_mode,pages:document.querySelectorAll("nav button").length,model_enabled:S.boot.model_enabled})')
-            if data['mode']!='desktop' or data['pages']!=6:raise SafetyError('桌面界面状态不正确')
+            if data['mode']!='desktop' or data['pages']!=7:raise SafetyError('桌面界面状态不正确')
+            window.evaluate_js('load("overview");true')
+            for _ in range(100):
+                if window.evaluate_js('document.querySelectorAll(".ov-node").length > 0'):break
+                time.sleep(.1)
+            else:raise SafetyError('关系图未完成加载')
+            result['overview_nodes']=window.evaluate_js('document.querySelectorAll(".ov-node").length')
+            window.evaluate_js('OV.mode="tree";render();true')
+            if not window.evaluate_js('document.querySelectorAll(".ov-tree-row").length > 0'):raise SafetyError('目录树切换失败')
+            result['overview_views']=['graph','tree']
             window.evaluate_js('load("inboxes");true')
             for _ in range(100):
                 if window.evaluate_js('document.getElementById("inbox-mode") !== null'):break

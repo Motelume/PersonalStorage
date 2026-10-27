@@ -28,6 +28,7 @@ class State:
         CREATE INDEX IF NOT EXISTS ui_tasks_started ON ui_tasks(started_at);
         CREATE TABLE IF NOT EXISTS inbox_imports(source TEXT PRIMARY KEY,data TEXT);
         CREATE TABLE IF NOT EXISTS ai_location_cache(path TEXT PRIMARY KEY,fingerprint TEXT,policy_hash TEXT,model TEXT,data TEXT,checked_at TEXT);
+        CREATE TABLE IF NOT EXISTS graph_links(id TEXT PRIMARY KEY,data TEXT NOT NULL,updated_at TEXT NOT NULL);
         ''')
         identity={'root':str(self.root),'volume':self.root.stat().st_dev,'schema_version':1}
         old=self.get('identity')

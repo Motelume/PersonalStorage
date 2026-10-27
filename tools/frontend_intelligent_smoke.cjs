@@ -10,7 +10,7 @@ async function main(){
  const idle=()=>page.waitForFunction(()=>!S.busy&&!S.acting);
  const nav=async name=>{await page.locator(`nav [data-page=${name}]`).click();await idle();};
  await page.goto(fixture.url);await page.locator('tbody tr').filter({hasText:'unknown.txt'}).waitFor();await idle();
- assert.equal(await page.locator('nav button').count(),6);
+ assert.equal(await page.locator('nav button').count(),7);
  await nav('inboxes');await page.locator('#inbox-path').waitFor();
  await page.locator('#inbox-label').fill('合成下载来源');await page.locator('#inbox-path').fill(fixture.downloads);
  await page.getByRole('button',{name:'添加收件箱',exact:true}).click();await idle();
