@@ -39,7 +39,9 @@ class IntelligentTests(unittest.TestCase):
 
     def test_external_source_is_opaque_and_identity_bound(self):
         row=self.external();actual=inboxes.resolve(self.root,self.app.state,row['source'])
-        self.assertEqual(actual,self.downloads/'download.txt')
+        # Hosted Windows runners use short TEMP aliases; resolution deliberately
+        # normalizes these, so compare the actual file rather than its spelling.
+        self.assertTrue(actual.samefile(self.downloads/'download.txt'))
         with self.assertRaises(SafetyError):inboxes.resolve(self.root,self.app.state,row['source']+'/../outside')
         with self.assertRaises(SafetyError):inboxes.resolve(self.root,self.app.state,'@inbox/'+'0'*32+'/download.txt')
         record=inboxes.settings(self.app.state)['sources'][0];inboxes.toggle(self.app.state,record['id'],False)
