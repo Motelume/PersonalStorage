@@ -19,9 +19,13 @@ def validate_folder(root,value):
     if not folder.is_dir() or folder==Path(folder.anchor):raise SafetyError('请选择存在的具体文件夹，不能选择整个磁盘')
     for parent in (folder,*folder.parents):
         if linked(parent):raise SafetyError('收件箱路径不能经过链接、junction或重解析点')
+    # Resolve Windows short-name aliases only after rejecting linked ancestors.
+    # An alias must not let the library or program register itself as an inbox.
+    folder=folder.resolve()
     protected=[canonical_root(root),program_home(),runtime_home(),canonical_root(os.environ.get('WINDIR',r'C:\Windows'))]
     protected.extend(canonical_root(os.environ[name]) for name in ('ProgramFiles','ProgramFiles(x86)','PROGRAMDATA') if os.environ.get(name))
     for other in protected:
+        other=other.resolve()
         if folder==other or folder.is_relative_to(other) or other.is_relative_to(folder):raise SafetyError('外部收件箱不能包含资料库、程序、运行状态或系统目录，也不能位于其中')
     return folder
 
