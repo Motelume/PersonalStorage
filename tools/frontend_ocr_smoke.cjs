@@ -10,7 +10,7 @@ async function main(){
  browser=await chromium.launch({headless:true,channel:'msedge'});page=await browser.newPage({viewport:{width:1500,height:1000}});
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  const idle=()=>page.waitForFunction(()=>!S.busy&&!S.acting);
- const nav=async p=>{await page.locator('nav [data-page='+p+']').click();await idle();};
+ const nav=async p=>{await page.locator('nav [data-page='+p+']').click();await idle();if(p==='settings')await page.locator('[data-tab=runtime]').click();};
  await page.goto(fixture.url);await page.locator('tbody tr').filter({hasText:'screenshot.png'}).waitFor();await idle();
  let rows=await page.evaluate(()=>S.rows);assert.equal(rows.length,3);assert(rows.every(r=>r.decision==='move'));
  assert.equal(rows.find(r=>r.source.endsWith('screenshot.png')).text_source,'local_ocr');assert.equal(rows.find(r=>r.source.endsWith('native.pdf')).text_source,'native');assert.equal(rows.find(r=>r.source.endsWith('mixed.pdf')).text_source,'mixed');

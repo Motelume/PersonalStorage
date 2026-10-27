@@ -139,7 +139,17 @@ def main(argv=None):
             result['bundled_document_extraction']=True
             from .ocr import self_test
             result['bundled_offline_ocr']=self_test()
+            from .rule_regex import search as regex_search
+            if not regex_search('native.*sample','native regex sample'):raise SafetyError('打包版隔离正则匹配失败')
+            result['bundled_bounded_regex']=True
             window.evaluate_js('load("settings");true')
+            for _ in range(100):
+                if window.evaluate_js('typeof RM !== "undefined" && !!RM.status && !S.busy'):break
+                time.sleep(.1)
+            else:raise SafetyError('规则管理未完成加载')
+            result['rule_tabs']=window.evaluate_js('Array.from(document.querySelectorAll(".rm-tabs button")).map(b=>b.textContent)')
+            if len(result['rule_tabs'])!=5:raise SafetyError('规则管理页签不完整')
+            window.evaluate_js('RM.tab="runtime";render();true')
             for _ in range(100):
                 if window.evaluate_js('document.getElementById("ocr-enabled") !== null'):break
                 time.sleep(.1)
@@ -162,6 +172,9 @@ def main(argv=None):
 
 
 def entry():
+    if len(sys.argv)==4 and sys.argv[1]=='--regex-worker':
+        from .rule_regex import worker
+        worker(sys.argv[2],sys.argv[3]);return 0
     if len(sys.argv)==5 and sys.argv[1]=='--extract-worker':
         from .extraction import _extract_local
         target=Path(sys.argv[4])

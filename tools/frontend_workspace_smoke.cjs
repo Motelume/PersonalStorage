@@ -11,7 +11,7 @@ async function main(){
  browser=await chromium.launch({headless:true,channel:'msedge'});page=await browser.newPage({viewport:{width:1440,height:980}});
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
  await page.goto(fixture.url);await page.waitForFunction(()=>!!S.views.inbox?.job);
- await page.locator('nav [data-page=settings]').click();await page.getByRole('heading',{name:'规则与设置',exact:true}).waitFor();
+ await page.locator('nav [data-page=settings]').click();await page.getByRole('heading',{name:'规则管理',exact:true}).waitFor();
  await page.waitForFunction(()=>S.views.inbox.unread>0&&!S.views.inbox.job);
  assert.equal(await page.evaluate(()=>S.page),'settings');
  assert(await page.locator('nav [data-page=inbox] .nav-task').isVisible());

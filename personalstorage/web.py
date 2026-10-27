@@ -22,6 +22,7 @@ from .review import resolve_external, review_context
 from .ai import AIManager
 from . import __version__
 from . import activity, scanning, inboxes, importing, classification, ai_audit,overview,ocr
+from .rule_manager import RuleManager
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -193,7 +194,7 @@ class Desktop:
                 else:row['id_handle']='task-'+row['id']
             return result
 
-    def directory(self, ident=None):
+    def directory(self, ident=None,allow_archived=False):
         with self.app() as app:
             parent = self.get(ident)['path'] if ident else None
             paths = [p for p in safe_path(self.root, parent).iterdir()] if parent else [self.root / p for p in sorted(app.policy.categories - {'00_收件箱', '09_移动硬盘管理'})]
@@ -203,7 +204,7 @@ class Desktop:
                     continue
                 rel = p.relative_to(self.root).as_posix()
                 try:
-                    app.policy.target(rel, '__target_check__')
+                    app.policy.target(rel, '__target_check__',allow_archived=allow_archived)
                 except SafetyError:
                     continue
                 out.append({'id': self.object(rel, directory=True), 'name': p.name, 'path': rel})
@@ -214,11 +215,75 @@ class Desktop:
         self.downloads[ident] = Path(path)
         return {'download': '/download/' + ident, 'filename': Path(path).name}
 
+    def rule_samples(self,ident=None,offset=0):
+        from itertools import islice
+        from .discovery import eligible_name
+        with self.app() as app:
+            obj=self.get(ident) if ident else None
+            if obj and not obj.get('rule_browser'):raise SafetyError('样本浏览对象无效')
+            logical=obj['path'] if obj else ''
+            if obj and obj.get('source_root'):
+                parent=inboxes.source_root(app.root,app.state,obj['source_root'])
+            else:parent=inboxes.resolve(app.root,app.state,logical) if logical else app.root
+            if not parent.is_dir() or linked(parent):raise SafetyError('样本目录不可用')
+            if obj and obj.get('identity')!=[parent.stat().st_dev,parent.stat().st_ino]:raise SafetyError('样本目录身份已变化')
+            entries=list(islice(parent.iterdir(),2001));limited=len(entries)>2000
+            rows=[]
+            for path in sorted(entries[:2000],key=lambda p:(not p.is_dir(),p.name.casefold())):
+                relative=logical+'/'+path.name if logical else path.name
+                if linked(path) or not eligible_name(path.name) or path.name.casefold()=='agents.md':continue
+                if not logical and (path.name.startswith(('_整理规则','09_移动硬盘管理')) or path.suffix.lower()=='.lnk'):continue
+                if not logical and path.is_dir() and path.name not in app.policy.categories:continue
+                st=path.stat();kind='directory' if path.is_dir() else 'file'
+                rows.append({'id':self.object(relative,rule_browser=True,identity=[st.st_dev,st.st_ino]),'name':path.name,'path':relative,
+                             'kind':kind,'sampleable':bool(logical or kind=='file')})
+            if not logical:
+                for source in inboxes.settings(app.state)['sources']:
+                    if not source['enabled']:continue
+                    try:
+                        path=inboxes.source_root(app.root,app.state,source['id']);st=path.stat()
+                        rows.append({'id':self.object(inboxes.PREFIX+source['id'],rule_browser=True,source_root=source['id'],identity=[st.st_dev,st.st_ino]),
+                                     'name':source['label']+'（外部收件箱）','path':inboxes.PREFIX+source['id'],'kind':'directory','sampleable':False})
+                    except (SafetyError,OSError):pass
+            offset=max(0,offset)
+            return {'path':logical,'items':rows[offset:offset+100],'next_offset':offset+100 if offset+100<len(rows) else None,'limited':limited}
+
     def public_plan(self, plan):
         return {'id': plan['id'], 'created_at': plan['created_at'], 'actions': [
             {k: v for k, v in a.items() if k != 'manifest'} for a in plan['actions']]}
 
     def perform(self, app, action, b, job):
+        if action.startswith('rules-'):
+            manager=RuleManager(app)
+            if action=='rules-save':return manager.save(b['model'],b.get('revision'),b.get('base_hash'))
+            if action=='rules-reset':return manager.reset(b.get('revision'),b.get('history_id'))
+            if action=='rules-rebase':return manager.rebase(b.get('revision'),b.get('resolutions'),b.get('model'),b.get('base_model'),b.get('base_hash'))
+            if action=='rules-validate':return manager.validate(manager.draft(b['revision'])['model'])
+            if action=='rules-simulate':
+                samples=[]
+                for sample in b.get('samples',[]):
+                    if 'id' in sample:
+                        obj=self.get(sample['id'])
+                        if not obj.get('rule_browser') or obj.get('source_root'):raise SafetyError('请选择受控文件或完整资料包')
+                        path=inboxes.resolve(app.root,app.state,obj['path']);st=path.stat()
+                        if path.is_dir() and '/' not in obj['path']:raise SafetyError('请进入分类后选择具体资料包')
+                        if [st.st_dev,st.st_ino]!=obj['identity']:raise SafetyError('样本已被替换，请重新选择')
+                        samples.append({'path':obj['path'],'context':sample.get('context',{})})
+                    else:
+                        if set(sample)-{'features','context'}:raise SafetyError('模拟样本不接受任意路径')
+                        samples.append(sample)
+                job['phase']='本地提取与规则试跑，不调用AI';return manager.simulate(b['revision'],samples)
+            if action=='rules-preview':
+                result=manager.preview(b['revision']);ticket=uid();self.previews[ticket]={'rule_publish':result,'at':time.monotonic()}
+                return {**result,'ticket':ticket}
+            if action=='rules-publish':
+                preview=self.previews.get(b.get('ticket'),{})
+                if 'rule_publish' not in preview or time.monotonic()-preview['at']>900:raise SafetyError('发布预览已过期，请重新查看差异')
+                result=manager.publish(preview['rule_publish']);self.previews.pop(b['ticket'],None);self.scan_cache.clear();return result
+            if action=='rules-reading':
+                from .common import instance_lock
+                with instance_lock(app.state.profile):return manager.reading()
+            raise SafetyError('未知规则管理操作')
         if action=='ocr-configure':
             result=ocr.configure(b);self.scan_cache.clear();return result
         if action=='ocr-clear-cache':
@@ -507,6 +572,9 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == '/api/operations': result = d.operations()
             elif url.path == '/api/inboxes':
                 with d.app() as app:result=inboxes.listing(app.root,app.state)
+            elif url.path=='/api/rules':
+                with d.app() as app:result=RuleManager(app).status()
+            elif url.path=='/api/rules-samples':result=d.rule_samples(q.get('id',[None])[0],int(q.get('offset',['0'])[0]))
             elif url.path=='/api/overview':
                 with d.app() as app:result={'preferences':overview.preferences(app.state),'links':d.graph_links(app),'root':d.graph_node(overview.describe(app.root,''))}
             elif url.path=='/api/overview-children':
@@ -523,7 +591,7 @@ class Handler(BaseHTTPRequestHandler):
                                 if dirs+files>=10000:break
                         result.update(directories=dirs,files=files,count_limited=dirs+files>=10000)
             elif url.path == '/api/activity':result=d.history(int(q.get('offset',['0'])[0]),q.get('query',[''])[0],q.get('status',['all'])[0])
-            elif url.path == '/api/directories': result = d.directory(q.get('id', [None])[0])
+            elif url.path == '/api/directories': result = d.directory(q.get('id', [None])[0],q.get('archived',['false'])[0]=='true')
             elif url.path.startswith('/api/jobs/'):
                 result = dict(d.jobs[url.path.rsplit('/', 1)[1]])
                 if result.get('run_id') and result['state'] == 'running':
@@ -532,10 +600,11 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js','/rules.js','/rules.css'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
                 types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8','management.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
                 types.update({'overview.js':'text/javascript; charset=utf-8','overview.css':'text/css; charset=utf-8','ocr.js':'text/javascript; charset=utf-8'})
+                types.update({'rules.js':'text/javascript; charset=utf-8','rules.css':'text/css; charset=utf-8'})
                 return self.send(200, (STATIC / name).read_bytes(), types[name])
             else: return self.send(404, {'error':'页面不存在'})
             self.send(200, result)
@@ -589,7 +658,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not target.is_dir(): raise SafetyError('目录不存在')
                 os.startfile(str(target))
                 result = {'opened':True}
-            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute','ocr-configure','ocr-clear-cache','ocr-test'}:
+            elif action in {'rules-save','rules-reset','rules-rebase','rules-validate','rules-simulate','rules-preview','rules-publish','rules-reading','ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute','ocr-configure','ocr-clear-cache','ocr-test'}:
                 result = d.job(action, b)
             else: raise SafetyError('未知操作')
             self.send(200, result)

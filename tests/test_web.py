@@ -61,6 +61,37 @@ class WebTests(unittest.TestCase):
         self.assertFalse(b['status']['watching']);self.assertFalse(b['authorization_current'])
         self.assertEqual(Path(b['status']['profile']), self.base/'profile')
 
+    def test_rule_draft_preview_publish_and_browser_sample_scope(self):
+        original=self.file('note.txt');initial=(self.root/'_整理规则/分类配置.json').read_bytes()
+        status=self.request('rules');edit=status['live'];edit['rules'][0]['rule']['all'][0]['value']='new.txt'
+        saved=self.job('rules-save',{'model':edit,'revision':None,'base_hash':status['policy_hash']})['result']['draft']
+        self.assertEqual(self.job('rules-preview',{'revision':saved['revision']})['state'],'error')
+        forbidden=self.job('rules-simulate',{'revision':saved['revision'],'samples':[{'path':str(self.base/'outside.txt')}]})
+        self.assertEqual(forbidden['state'],'error')
+        self.assertEqual((self.root/'_整理规则/分类配置.json').read_bytes(),initial)
+        run=self.job('rules-simulate',{'revision':saved['revision'],'samples':[{'features':{'name':'new.txt','text':'course','kind':'file'}}]})
+        self.assertEqual(run['state'],'done',run)
+        preview=self.job('rules-preview',{'revision':saved['revision']})['result'];published=self.job('rules-publish',{'ticket':preview['ticket']})
+        self.assertEqual(published['state'],'done',published);self.assertTrue(original.exists())
+        self.assertEqual(self.job('rules-publish',{'ticket':preview['ticket']})['state'],'error')
+
+    def test_rule_real_sample_reuses_controlled_handles_and_keeps_original(self):
+        p=self.file('note.txt');status=self.request('rules');saved=self.job('rules-save',{'model':status['live'],'revision':None,'base_hash':status['policy_hash']})['result']['draft']
+        roots=self.request('rules-samples')['items'];inbox=next(x for x in roots if x['name']=='00_收件箱')
+        items=self.request('rules-samples?id='+inbox['id'])['items'];sample=next(x for x in items if x['name']=='note.txt')
+        result=self.job('rules-simulate',{'revision':saved['revision'],'samples':[{'id':sample['id']}]})
+        self.assertEqual(result['state'],'done',result);self.assertEqual(result['result']['results'][0]['draft']['result']['decision'],'move')
+        self.assertTrue(p.exists());self.assertEqual(self.request('pending'),[])
+        self.assertEqual(self.job('rules-simulate',{'revision':saved['revision'],'samples':[{'id':inbox['id']}]})['state'],'error')
+
+    def test_rule_write_routes_require_session_and_keep_protections(self):
+        for path in ('rules-save','rules-publish','rules-rebase'):
+            with self.assertRaises(HTTPError):self.request(path,{},headers={'X-Storage-Token':'wrong'})
+        status=self.request('rules');data=status['live'];data['config']['constraints']['no_delete']=False
+        saved=self.job('rules-save',{'model':data,'revision':None,'base_hash':status['policy_hash']})['result']
+        self.assertFalse(saved['validation']['valid'])
+        self.assertEqual(self.job('rules-preview',{'revision':saved['draft']['revision']})['state'],'error')
+
     def test_external_modes_persist_and_execute_with_stale_preview_protection(self):
         downloads=self.base/'external';downloads.mkdir();source=downloads/'note.txt';source.write_text('course')
         created=self.job('inbox-add',{'path':str(downloads),'import_mode':'move'})['result']

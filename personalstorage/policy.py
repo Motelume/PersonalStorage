@@ -14,6 +14,12 @@ class Policy:
         self.validate()
         self.hash=digest(self.data)
         self.categories={x['root'] for x in self.data['categories']}
+    @classmethod
+    def from_data(cls,root,data):
+        import copy
+        obj=cls.__new__(cls);obj.root=canonical_root(root);obj.data=copy.deepcopy(data)
+        obj.validate();obj.hash=digest(obj.data);obj.categories={x['root'] for x in obj.data['categories']}
+        return obj
     def validate(self):
         d=self.data
         if d.get('schema_version')!='3.0': raise SafetyError('需使用可执行schema 3.0，不能把自然语言配置当成脚本')
@@ -23,6 +29,8 @@ class Policy:
         if not d.get('policy_version'): raise SafetyError('缺少规则版本')
         ids=set()
         for rule in d['executable_rules']:
+            if not isinstance(rule.get('id'),str) or not rule['id'].strip():raise SafetyError('规则ID不能为空')
+            if not isinstance(rule.get('level',100),int) or isinstance(rule.get('level'),bool):raise SafetyError('决策层级必须是整数')
             if rule['id'] in ids: raise SafetyError('重复规则ID')
             ids.add(rule['id'])
             if not isinstance(rule.get('all'),list) or not rule['all']: raise SafetyError('规则必须有明确条件')
@@ -30,8 +38,11 @@ class Policy:
                 if set(c)!={'field','op','value'} or c['field'] not in FIELDS or c['op'] not in OPS: raise SafetyError('不支持的规则条件')
                 if c['op']=='regex':
                     if not isinstance(c['value'],str) or len(c['value'])>256: raise SafetyError('正则超限')
-                    re.compile(c['value'])
+                    try:re.compile(c['value'])
+                    except re.error as exc:raise SafetyError('正则表达式无效：'+str(exc)) from exc
                 if c['op']=='in' and not isinstance(c['value'],list): raise SafetyError('in需要列表')
+                if c['op']!='in' and not isinstance(c['value'],str):raise SafetyError('条件值必须是文字')
+                if c['op']=='in' and (not c['value'] or any(not isinstance(v,str) for v in c['value'])):raise SafetyError('列表条件需要非空文字列表')
             target=relpath(rule['target_parent'])
             if target.split('/')[0] not in cats: raise SafetyError('规则目标不是已批准类别')
             if target.startswith(('00_收件箱','09_移动硬盘管理','99_临时待整理')): raise SafetyError('普通规则不能隐式指向管理/暂存目录')
@@ -54,29 +65,47 @@ class Policy:
 
     @staticmethod
     def matches(c,features):
-        v=features.get(c['field'],''); expect=c['value']
+        if c['field'] not in features:return False
+        v=features[c['field']]; expect=c['value']
         if c['op']=='equals': return v==expect
         if c['op']=='contains': return str(expect).casefold() in str(v).casefold()
-        if c['op']=='regex': return re.search(expect,str(v),re.I) is not None
+        if c['op']=='regex':
+            from .rule_regex import search
+            return search(expect,str(v))
         if c['op']=='in': return v in expect
         return False
 
     def classify(self,features,context=None):
+        return self.explain(features,context)['result']
+
+    def explain(self,features,context=None):
         f=dict(features)
         f.update({'context.'+k:v for k,v in (context or {}).items()})
+        trace={'rules':[],'selected_level':None}
+        def done(result):return {**trace,'result':result}
         if (context or {}).get('task_id'):
             tasks=[t for t in self.data.get('tasks',[]) if t['id']==context['task_id']]
-            if len(tasks)!=1: return {'decision':'review','reason':'任务ID未知或不唯一'}
+            if len(tasks)!=1: return done({'decision':'review','reason':'任务ID未知或不唯一'})
             task=tasks[0]
-            if not safe_path(self.root,task['path']).is_dir(): return {'decision':'review','reason':'登记任务的实际目录已不存在，需核对新位置；不能自动重建'}
+            if not safe_path(self.root,task['path']).is_dir(): return done({'decision':'review','reason':'登记任务的实际目录已不存在，需核对新位置；不能自动重建'})
             if task.get('storage')!='active' or task.get('lifecycle') in ('archived','completed'):
-                return {'decision':'review','reason':'任务位于暂存/离线位置或已归档，需确定补充意图'}
-            return {'decision':'move','target_parent':task['path'],'rule_id':'context_task','evidence':'本次明确的任务投递上下文'}
-        matches=[r for r in self.data['executable_rules'] if all(self.matches(c,f) for c in r['all'])]
-        if not matches: return {'decision':'review','reason':'无明确可执行规则；需人工或AI复核'}
+                return done({'decision':'review','reason':'任务位于暂存/离线位置或已归档，需确定补充意图'})
+            return done({'decision':'move','target_parent':task['path'],'rule_id':'context_task','evidence':'本次明确的任务投递上下文'})
+        matches=[]
+        for rule in self.data['executable_rules']:
+            conditions=[]
+            try:
+                for c in rule['all']:
+                    conditions.append({**c,'present':c['field'] in f,'matched':self.matches(c,f),'actual':str(f.get(c['field'],''))[:180]})
+            except SafetyError as exc:return done({'decision':'review','reason':str(exc)})
+            matched=all(c['matched'] for c in conditions)
+            trace['rules'].append({'id':rule['id'],'level':rule.get('level',100),'target_parent':rule['target_parent'],'matched':matched,'conditions':conditions})
+            if matched:matches.append(rule)
+        if not matches: return done({'decision':'review','reason':'无明确可执行规则；需人工或AI复核'})
         # A lower number only selects an explicitly defined decision level.
         level=min(r.get('level',100) for r in matches)
+        trace['selected_level']=level
         selected=[r for r in matches if r.get('level',100)==level]
         targets={r['target_parent'] for r in selected}
-        if len(targets)!=1: return {'decision':'review','reason':'同层规则指向不同目标','candidates':sorted(targets)[:3]}
-        return {'decision':'move','target_parent':selected[0]['target_parent'],'rule_id':','.join(r['id'] for r in selected),'evidence':'已发布明确条件全部匹配'}
+        if len(targets)!=1: return done({'decision':'review','reason':'同层规则指向不同目标','candidates':sorted(targets)[:3]})
+        return done({'decision':'move','target_parent':selected[0]['target_parent'],'rule_id':','.join(r['id'] for r in selected),'evidence':'已发布明确条件全部匹配'})

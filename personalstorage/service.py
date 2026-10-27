@@ -7,10 +7,22 @@ from .executor import execute
 from .recovery import recover
 from . import reports
 from .paths import canonical_root
+from .common import SafetyError
 
 class Application:
     def __init__(self,root,profile=None):
-        self.root=canonical_root(root); self.policy=Policy(self.root); self.state=State(self.root,profile)
+        self.root=canonical_root(root);self.state=State(self.root,profile)
+        try:
+            if self.state.get('rule_publish_journal'):
+                from .rule_manager import recover
+                from .common import instance_lock
+                try:
+                    with instance_lock(self.state.profile):recover(self.root,self.state)
+                except SafetyError:
+                    # A live publisher owns the journal. Atomic JSON remains readable.
+                    pass
+            self.policy=Policy(self.root)
+        except BaseException:self.state.close();raise
     def plan(self,**options): return build_plan(self.root,self.state,self.policy,**options)
     def execute(self,plan_id): return execute(self.root,self.state,self.policy,plan_id)
     def recover(self): return recover(self.root,self.state,self.policy)

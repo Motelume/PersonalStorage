@@ -66,6 +66,7 @@ async function run(){
  await p.locator('tbody tr').filter({hasText:'note.txt'}).waitFor();
  const reviewDownload=p.waitForEvent('download');await p.getByRole('button',{name:'导出待审任务',exact:false}).click();await reviewDownload;await idle();
  await nav('settings');
+ await p.locator('[data-tab=runtime]').click();
  assert(await p.getByText('后台未运行',{exact:false}).count()>0);
  const snapshot=p.waitForEvent('download');await p.getByRole('button',{name:'导出管理快照',exact:false}).click();await snapshot;await idle();
  await p.setViewportSize({width:850,height:900});

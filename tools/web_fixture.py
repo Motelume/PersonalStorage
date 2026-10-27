@@ -22,11 +22,19 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
     (root/'00_收件箱').mkdir(parents=True)
     (root/'01_课程学习/测试课程').mkdir(parents=True)
     c=config(); c['executable_rules'][0]['all']=[{'field':'text','op':'contains','value':'course'}]
+    if '--rules-fixture' in sys.argv:
+        c['explicit_preferences']=[{'id':'legacy-fixture','identity':'synthetic example bundle','destination':'01_课程学习/测试课程','reason':'existing structured preference','move_as_unit':True}]
     write_json(root/'_整理规则/分类配置.json',c)
     for name,text in [('note.txt','course'),('other.txt','course'),('unknown.txt','<script>window.injected=true</script>')]:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
     server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
+    if '--rules-fixture' in sys.argv:
+        original_perform=server.desktop.perform
+        def delayed_rules(app,action,body,job):
+            if action=='rules-simulate':time.sleep(1)
+            return original_perform(app,action,body,job)
+        server.desktop.perform=delayed_rules
     if '--ocr-fixture' in sys.argv:
         from test_ocr import sample_image,native_pdf
         from PIL import Image

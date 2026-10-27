@@ -17,6 +17,8 @@ TITLES={'scan':'扫描收件箱','detail':'读取资料详情','preview':'生成
         'inbox-add':'添加收件箱','inbox-toggle':'调整收件箱监测','inbox-mode':'调整归档方式','inbox-remove':'移除收件箱来源','library-audit':'全库位置复核',
         'cleanup-preview':'核对待清理原件','cleanup-execute':'清理已校验原件','overview-search':'目录总览名称搜索',
         'ocr-configure':'保存本地OCR配置','ocr-clear-cache':'清理识别缓存','ocr-test':'离线OCR自检'}
+TITLES.update({'rules-save':'保存规则草稿','rules-reset':'从现行或历史规则建立草稿','rules-validate':'检查规则草稿',
+               'rules-simulate':'本地规则样本试跑','rules-preview':'预览规则发布差异','rules-publish':'发布分类规则','rules-reading':'生成规则阅读版'})
 
 
 def begin(state,ident,action,page=None):
