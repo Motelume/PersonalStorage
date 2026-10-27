@@ -171,7 +171,14 @@ class WebTests(unittest.TestCase):
         provider=FakeProvider();self.server.desktop.credential_vault=FakeVault();self.server.desktop.ai_provider_factory=lambda *a,**k:provider
         with self.server.desktop.app() as app:AIManager(app,FakeVault()).configure({'enabled':True})
         (self.root/'01_课程学习/测试课程/material.txt').write_text('course')
-        self.assertEqual(self.job('library-audit')['state'],'error');self.assertEqual(provider.calls,0)
+        from personalstorage import activity
+        original_update=activity.update
+        def delayed_error_record(state,ident,status,**kwargs):
+            if status=='error':time.sleep(.25)
+            return original_update(state,ident,status,**kwargs)
+        with patch('personalstorage.web.activity.update',side_effect=delayed_error_record):
+            self.assertEqual(self.job('library-audit')['state'],'error')
+        self.assertEqual(provider.calls,0)
         first=self.job('library-audit',{'confirmed':True,'max_batches':2});self.assertEqual(first['state'],'done',first)
         self.assertEqual(first['result']['approved'],1)
         second=self.job('library-audit',{'confirmed':True,'max_batches':2});self.assertEqual(second['result']['cache_hits'],1)

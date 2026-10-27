@@ -87,17 +87,23 @@ class Desktop:
         def work():
             job = self.jobs[ident]
             job.update(state='running', phase='核对与处理')
+            outcome={'state':'error','phase':'未完成','error':'任务未正常结束'}
             try:
                 with self.serial, self.app() as app:
                     activity.update(app.state,ident,'running',phase=job['phase'])
                     result = self.perform(app, action, body, job)
                     activity.update(app.state,ident,'done',phase='已完成',result=result)
-                job.update(state='done', phase='已完成', result=result)
+                outcome={'state':'done','phase':'已完成','result':result}
             except Exception as exc:
-                job.update(state='error', phase='未完成', error=str(exc))
-                with self.app() as app:activity.update(app.state,ident,'error',phase='未完成',error=str(exc))
+                outcome={'state':'error','phase':'未完成','error':str(exc)}
+                try:
+                    with self.app() as app:activity.update(app.state,ident,'error',phase='未完成',error=str(exc))
+                except Exception:outcome['error']+='；本次任务记录未能保存'
             finally:
                 if audit:self.audit_guard.release()
+                # Once terminal status is visible, records and locks are ready
+                # for an immediate retry from another HTTP request.
+                job.update(outcome)
         self.pool.submit(work)
         return {'job_id': ident}
 
