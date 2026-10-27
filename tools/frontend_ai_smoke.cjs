@@ -23,6 +23,7 @@ async function main(){
  assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));
  assert.equal(await page.evaluate(()=>S.boot.ai.history.length),0);
  await page.getByRole('button',{name:'发送这 1 项至 DeepSeek',exact:true}).click();await idle();
+ await page.locator('nav [data-page=review]').click();await page.locator('tbody tr').filter({hasText:'unknown.txt'}).waitFor();await idle();
  await page.locator('tbody tr').filter({hasText:'unknown.txt'}).click();
  await page.getByRole('button',{name:'采用AI建议并预览',exact:true}).click();
  await page.getByRole('button',{name:'执行这 1 项',exact:true}).waitFor();

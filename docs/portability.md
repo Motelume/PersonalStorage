@@ -1,6 +1,6 @@
 # 稳定架构与跨电脑复用
 
-程序版本0.4.1，通用规则包`personalstorage.education` 1.2.0，现有资料配置schema仍为3.0。本机状态与凭据不跟随Git或程序包分发。
+程序版本0.4.2，通用规则包`personalstorage.education` 1.2.0，现有资料配置schema仍为3.0。本机状态与凭据不跟随Git或程序包分发。
 
 ## 四个边界
 

@@ -102,6 +102,37 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.job('execute',{'plan_id':preview['id']})['state'],'error')
         self.assertTrue(p.exists())
 
+    def test_fast_scan_change_is_rejected_before_preview(self):
+        p=self.file('note.txt')
+        row=self.job('scan')['result']['rows'][0]
+        p.write_text('new version')
+        self.assertEqual(self.job('preview',{'ids':[row['id']]})['state'],'error')
+        with self.server.desktop.app() as app:self.assertEqual(app.state.db.execute('SELECT COUNT(*) FROM plans').fetchone()[0],0)
+
+    def test_execution_hash_check_survives_same_size_and_restored_mtime(self):
+        import os
+        p=self.file('note.txt')
+        row=self.job('scan')['result']['rows'][0]
+        preview=self.job('preview',{'ids':[row['id']]})['result']
+        old=p.stat();p.write_text('COURSE');os.utime(p,ns=(old.st_atime_ns,old.st_mtime_ns))
+        self.assertEqual(self.job('execute',{'plan_id':preview['id']})['state'],'error')
+        self.assertTrue(p.exists())
+
+    def test_task_history_survives_server_restart_without_body_secrets(self):
+        self.file('note.txt');result=self.job('scan')
+        self.assertEqual(result['state'],'done')
+        first=self.request('activity')
+        self.assertEqual(first['rows'][0]['task']['action'],'scan')
+        self.server.shutdown();self.thread.join();self.server.server_close();self.server.desktop.close()
+        self.server=make_server(self.root,self.base/'profile')
+        self.server.desktop.credential_vault=CredentialVault(self.base/'test-credentials.sqlite3')
+        self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
+        self.url=self.server.desktop.url;self.token=self.request('bootstrap')['token']
+        reopened=self.request('activity')
+        self.assertEqual(reopened['rows'][0]['id'],first['rows'][0]['id'])
+        self.assertEqual(reopened['rows'][0]['status'],'done')
+        self.assertNotIn('token',json.dumps(reopened))
+
     def test_export_import_snapshot_are_downloads(self):
         result=self.job('review-export')['result']
         with urlopen(self.url+result['download']) as r: self.assertEqual(json.load(r)['schema_version'],'1.0')

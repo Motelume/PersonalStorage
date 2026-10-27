@@ -21,6 +21,7 @@ from .recovery import undo
 from .review import resolve_external, review_context
 from .ai import AIManager
 from . import __version__
+from . import activity, scanning
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -37,6 +38,7 @@ class Desktop:
         self.jobs = {}
         self.downloads = {}
         self.ai_packets = {}
+        self.scan_cache = {}
         self.credential_vault = None
         self.ai_provider_factory = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='storage-ui')
@@ -69,16 +71,21 @@ class Desktop:
 
     def job(self, action, body):
         ident = uid()
-        self.jobs[ident] = {'id': ident, 'state': 'queued', 'phase': '等待处理', 'at': now()}
+        page=body.get('_page')
+        self.jobs[ident] = {'id': ident, 'state': 'queued', 'phase': '等待处理', 'at': now(), 'page':page}
+        with self.app() as app:activity.begin(app.state,ident,action,page)
         def work():
             job = self.jobs[ident]
             job.update(state='running', phase='核对与处理')
             try:
                 with self.serial, self.app() as app:
+                    activity.update(app.state,ident,'running',phase=job['phase'])
                     result = self.perform(app, action, body, job)
+                    activity.update(app.state,ident,'done',phase='已完成',result=result)
                 job.update(state='done', phase='已完成', result=result)
             except Exception as exc:
                 job.update(state='error', phase='未完成', error=str(exc))
+                with self.app() as app:activity.update(app.state,ident,'error',phase='未完成',error=str(exc))
         self.pool.submit(work)
         return {'job_id': ident}
 
@@ -118,6 +125,15 @@ class Desktop:
                 r['file_count'] = len(m.get('files', []))
                 r['id_handle'] = self.object(r['data'].get('target', r['data']['source']), operation_id=r['id'])
             return out
+
+    def history(self, offset=0, query='', status='all'):
+        if offset<0 or offset>100000 or len(query)>200:raise SafetyError('记录查询范围无效')
+        with self.app() as app:
+            result=activity.recent(app.state,offset=offset,query=query,status=status)
+            for row in result['rows']:
+                if row['kind']=='operation':row['id_handle']=self.object(row['data'].get('target',row['data']['source']),operation_id=row['id'])
+                else:row['id_handle']='task-'+row['id']
+            return result
 
     def directory(self, ident=None):
         with self.app() as app:
@@ -176,16 +192,15 @@ class Desktop:
                 return self.perform(app,'preview',{'ids':[b['id']],'target_id':self.object(parent,directory=True),
                     'evidence':'用户采用AI建议：'+result.get('reason','')},job)
         if action == 'scan':
-            job['phase'] = '读取收件箱并生成建议'
-            plan = app.plan(include_root=b.get('include_root') is True)
+            job['phase'] = '快速读取收件箱，生成归属建议'
+            def progress(completed,total):job.update(completed=completed,total=total)
+            result=scanning.scan(app.root,app.policy,self.scan_cache,include_root=b.get('include_root') is True,progress=progress)
             rows = []
-            for a in plan['actions']:
-                ident = self.object(a['source'], fingerprint=a.get('manifest_hash'), action=a,
-                                    policy_hash=app.policy.hash, include_root=plan['scope']['include_root'])
-                rows.append({'id': ident, **{k: v for k, v in a.items() if k not in ('id', 'manifest')},
-                             'kind': a.get('manifest', {}).get('kind'),
-                             'file_count': len(a.get('manifest', {}).get('files', []))})
-            return {'rows': rows, 'scanned_at': now()}
+            for a in result['rows']:
+                ident = self.object(a['source'], fingerprint=None, scan_fingerprint=a.get('scan_fingerprint'), action=a,
+                                    policy_hash=app.policy.hash, include_root=b.get('include_root') is True)
+                rows.append({'id':ident,**a})
+            return {**result,'rows':rows}
         if action == 'detail':
             obj = self.get(b['id']); path = safe_path(self.root, obj['path'])
             m = manifest(path); obj['fingerprint'] = digest(m)
@@ -214,13 +229,17 @@ class Desktop:
             decisions = {}
             for obj in objs:
                 if obj.get('policy_hash') and obj['policy_hash'] != app.policy.hash: raise SafetyError('规则已变化，请重新扫描')
-                if not obj.get('fingerprint') or digest(manifest(safe_path(self.root, obj['path']))) != obj['fingerprint']:
+                if obj.get('scan_fingerprint') and scanning.metadata(safe_path(self.root,obj['path']))['fingerprint']!=obj['scan_fingerprint']:
                     raise SafetyError('文件已变化，请重新扫描或查看详情')
+                if obj.get('fingerprint') and digest(manifest(safe_path(self.root, obj['path']))) != obj['fingerprint']:
+                    raise SafetyError('文件已变化，请重新扫描或查看详情')
+                if not obj.get('scan_fingerprint') and not obj.get('fingerprint'):raise SafetyError('请先扫描或读取详情')
                 if not manual:
                     expected = 'review' if waiting else 'move'
                     if obj.get('action', {}).get('decision') != expected: raise SafetyError('包含不可执行项')
                 else:
                     if not str(b.get('evidence', '')).strip(): raise SafetyError('请填写本次归属依据')
+                    if not obj.get('fingerprint'):obj['fingerprint']=digest(manifest(safe_path(self.root,obj['path'])))
                     decisions[obj['path']] = {'target_parent': target['path'], 'manifest_hash': obj['fingerprint'], 'evidence': str(b['evidence'])[:2000]}
             plan = app.plan(sources=[o['path'] for o in objs], include_root=manual or any(o.get('include_root') for o in objs),
                 include_review=manual, allow_existing=manual, decisions=decisions, approve_decisions=manual)
@@ -228,7 +247,10 @@ class Desktop:
             if any(a['decision'] != expected for a in plan['actions']):
                 raise SafetyError('计划中有冲突或不可执行项，请重新扫描或选择目标')
             for obj, a in zip(objs, plan['actions']):
-                if a.get('manifest_hash') != obj['fingerprint']: raise SafetyError('文件在预览时变化，请重新扫描')
+                if obj.get('fingerprint') and a.get('manifest_hash') != obj['fingerprint']: raise SafetyError('文件在预览时变化，请重新扫描')
+                if obj.get('scan_fingerprint') and scanning.metadata(safe_path(self.root,obj['path']))['fingerprint']!=obj['scan_fingerprint']:raise SafetyError('文件在预览时变化，请重新扫描')
+                if not manual and a.get('target')!=obj['action'].get('target'):raise SafetyError('归属建议已变化，请重新扫描')
+                obj['fingerprint']=a.get('manifest_hash')
             self.previews[plan['id']] = {'plan': plan, 'time': time.monotonic(), 'used': False, 'objects': [dict(o) for o in objs]}
             return self.public_plan(plan)
         if action == 'execute':
@@ -363,6 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == '/api/pending': result = d.pending()
             elif url.path == '/api/review-history': result = d.pending(history=True)
             elif url.path == '/api/operations': result = d.operations()
+            elif url.path == '/api/activity':result=d.history(int(q.get('offset',['0'])[0]),q.get('query',[''])[0],q.get('status',['all'])[0])
             elif url.path == '/api/directories': result = d.directory(q.get('id', [None])[0])
             elif url.path.startswith('/api/jobs/'):
                 result = dict(d.jobs[url.path.rsplit('/', 1)[1]])

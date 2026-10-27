@@ -1,2 +1,2 @@
-"""Local PersonalStorage with a loopback UI; model network calls disabled."""
-__version__ = '0.4.1'
+"""Local PersonalStorage with explicitly requested DeepSeek reviews."""
+__version__ = '0.4.2'

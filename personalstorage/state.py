@@ -24,6 +24,8 @@ class State:
         CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT,status TEXT,at TEXT,data TEXT);
         CREATE TABLE IF NOT EXISTS plans(id TEXT PRIMARY KEY,data TEXT);
         CREATE TABLE IF NOT EXISTS observations(item_id TEXT PRIMARY KEY,status TEXT,checked_at TEXT,hash_checked INTEGER);
+        CREATE TABLE IF NOT EXISTS ui_tasks(id TEXT PRIMARY KEY,action TEXT,page TEXT,status TEXT,started_at TEXT,finished_at TEXT,phase TEXT,summary TEXT,error TEXT,owner_pid INTEGER,title TEXT);
+        CREATE INDEX IF NOT EXISTS ui_tasks_started ON ui_tasks(started_at);
         ''')
         identity={'root':str(self.root),'volume':self.root.stat().st_dev,'schema_version':1}
         old=self.get('identity')

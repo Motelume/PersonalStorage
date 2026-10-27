@@ -12,6 +12,8 @@
 
 应用窗口与本机服务同生命周期，关闭应用会请求停止后台；已经进入的操作或审核会完成收尾后退出。网页版独立启动时关闭网页不会关闭服务。同一资料库的文件执行与AI审核通过进程间锁协调。
 
+切换页面不会停止任务，侧边栏圆点表示运行中，数字表示未读任务结果。操作记录中的任务历史保留七天，关闭重开后可查询；列表和详情各自滚动。文件移动审计继续长期保留以供核对、恢复和撤销。
+
 API密钥、索引、审核历史和运行数据仍在当前电脑的私有状态目录，不嵌入exe、不放入便携包。新电脑需使用自己的资料路径和重新输入密钥。
 
 ## 从源码构建
@@ -31,5 +33,7 @@ dist\PersonalStorage\PersonalStorage.exe --self-test-report .local\native-test-n
 ```
 
 网页版和AI流程的隔离验收分别是`tools/frontend_smoke.cjs`与`tools/frontend_ai_smoke.cjs`，需本机Edge和Playwright。后者只使用合成资料、临时密钥和模拟AI，不访问真实API。
+
+`tools/frontend_workspace_smoke.cjs`另覆盖任务运行时切页、侧栏结果标记、历史分页和独立滚动。
 
 实现依据：[pywebview安装](https://pywebview.flowrl.com/guide/installation.html)、[打包说明](https://pywebview.flowrl.com/guide/freezing.html)。

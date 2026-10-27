@@ -24,12 +24,28 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
     server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
-    if '--ai-fixture' in sys.argv:
+    if '--ai-fixture' in sys.argv or '--workspace-fixture' in sys.argv:
         from test_ai import FakeProvider
         provider=FakeProvider()
         server.desktop.credential_vault.save('sk-'+'synthetic-fixture-key'*2)
         server.desktop.ai_provider_factory=lambda *a,**k:provider
         with server.desktop.app() as app:AIManager(app,server.desktop.credential_vault).configure({'enabled':True})
+    if '--workspace-fixture' in sys.argv:
+        from personalstorage import activity,scanning
+        old_scan=scanning.scan
+        def delayed_scan(*args,**kwargs):
+            time.sleep(1.5)
+            return old_scan(*args,**kwargs)
+        scanning.scan=delayed_scan
+        old_test=provider.test
+        def delayed_test():
+            time.sleep(1.5)
+            return old_test()
+        provider.test=delayed_test
+        with server.desktop.app() as app:
+            for index in range(180):
+                activity.begin(app.state,'fixture-'+str(index),'scan','inbox')
+                activity.update(app.state,'fixture-'+str(index),'done',result={'rows':[]})
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     print(json.dumps({'url':server.desktop.url,'root':str(root),'stop':str(base/'stop')}),flush=True)
     try:

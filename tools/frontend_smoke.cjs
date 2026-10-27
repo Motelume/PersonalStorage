@@ -25,7 +25,7 @@ async function run(){
  await p.getByRole('button',{name:'执行这 1 项'}).click();await p.locator('tbody tr').filter({hasText:'other.txt'}).waitFor();await idle();
  assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/note.txt')));
  assert(fs.existsSync(path.join(fixture.root,'00_收件箱/other.txt')));
- await nav('history');await p.locator('tbody tr').first().click();
+ await nav('history');await p.locator('tbody tr').filter({hasText:'note.txt'}).first().click();
  await p.getByRole('button',{name:'检查撤销…'}).click();await p.getByRole('button',{name:'确认返回原位置'}).waitFor();
  assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/note.txt')));
  await p.getByRole('button',{name:'确认返回原位置'}).click();await idle();
