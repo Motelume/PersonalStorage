@@ -53,6 +53,8 @@ jobs:
             .local/release-*/acceptance.json
             .local/quality-acceptance.json
           if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
   publish:
     if: inputs.publish
     needs: beta
