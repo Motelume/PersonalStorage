@@ -20,6 +20,8 @@ TITLES={'scan':'扫描收件箱','detail':'读取资料详情','preview':'生成
 TITLES.update({'rules-save':'保存规则草稿','rules-reset':'从现行或历史规则建立草稿','rules-validate':'检查规则草稿',
                'rules-simulate':'本地规则样本试跑','rules-preview':'预览规则发布差异','rules-publish':'发布分类规则','rules-reading':'生成规则阅读版'})
 
+TITLES.update({'wb-index': '更新本地正文索引', 'wb-search': '全文与语义检索', 'wb-backup': '生成管理快照', 'wb-restore-preview': '检查管理恢复', 'wb-restore': '恢复管理状态', 'wb-original-preview': '检查原资料备份', 'wb-original-backup': '校验备份原资料', 'wb-original-restore-preview': '检查原资料恢复', 'wb-original-restore': '恢复原资料到新目录', 'wb-lifecycle-preview': '检查任务目录状态', 'wb-lifecycle': '变更任务目录状态', 'wb-package-preview': '比较通用规则包', 'wb-package-update': '更新通用规则包', 'wb-ai-preview': '预览AI候选输入', 'wb-ai-run': '生成AI候选', 'wb-ai-accept-rule': '采用规则候选到草稿', 'wb-ai-accept-link': '确认目录关联', 'wb-quality': '评估人工标注样本', 'wb-recognition-install': '准备本地识别组件', 'wb-recognize': '增强本地识别', 'wb-recognition-accept': '采用已核对的识别文字', 'wb-diagnostics': '运行本机诊断', 'wb-update-preview': '检查测试版更新', 'wb-update-stage': '校验更新安装包', 'wb-update-launch': '打开测试版安装器', 'wb-rollback-preview': '检查程序版本回退', 'wb-rollback': '准备程序版本回退'})
+
 
 def begin(state,ident,action,page=None):
     at=now();owner=page if page in ('inbox','inboxes','review','history','settings','ai','overview') else PAGE.get(action,'ai' if action.startswith('ai-') else 'settings')

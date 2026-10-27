@@ -156,7 +156,14 @@ class InstallerTests(unittest.TestCase):
     def test_release_gate_refuses_one_point_zero_without_signoff(self):
         import importlib.util
         path=Path(__file__).resolve().parents[1]/'tools/release_gate.py';spec=importlib.util.spec_from_file_location('test_release_gate',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-        self.assertEqual(module.validate(),'0.10.0b1')
+        from personalstorage import __version__
+        self.assertEqual(module.validate(),__version__)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'personalstorage').mkdir();(root/'personalstorage/__init__.py').write_text("__version__ = '1.0.0'",encoding='utf-8');(root/'pyproject.toml').write_text('version = "1.0.0"',encoding='utf-8')
+            write_json(root/'release-policy.json',{'user_approved_1_0':False})
+            with patch.object(module,'ROOT',root),self.assertRaises(ValueError):module.validate()
+            write_json(root/'release-policy.json',{'user_approved_1_0':True})
+            with patch.object(module,'ROOT',root):self.assertEqual(module.validate(),'1.0.0')
 
 
 if __name__=='__main__':unittest.main()

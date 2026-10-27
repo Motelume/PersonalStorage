@@ -12,11 +12,20 @@ function badge(s){return `<span class="badge ${['move','committed','confirmed','
 function filename(path){return String(path).split('/').pop();}
 function icon(path){const n=filename(path);return `<span class="file-icon">${esc(n.includes('.')?n.split('.').pop().slice(0,5).toUpperCase():'目录')}</span>`;}
 function note(text,error=false,page=S.page){view(page).notice={text,error};if(S.page===page){const n=$('#notice');n.textContent=text;n.hidden=false;n.classList.toggle('error',error);}}
-async function api(path,body){const r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-Storage-Token':S.boot.token},body:body===undefined?undefined:JSON.stringify(body)});const value=await r.json();if(!r.ok)throw Error(value.error||'本地服务请求失败');return value;}
+async function api(path,body){
+ const retryable=body===undefined||!!body._request_id;
+ for(let attempt=0;;attempt++){
+  let r,value;
+  try{r=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-Storage-Token':S.boot.token},body:body===undefined?undefined:JSON.stringify(body)});value=await r.json();}
+  catch(error){if(error instanceof TypeError&&retryable&&attempt<2){await new Promise(resolve=>setTimeout(resolve,150*(attempt+1)));continue;}throw Error('本地请求 '+path+' 未完成，请检查服务连接。');}
+  if(!r.ok)throw Error(value.error||'本地服务请求失败');return value;
+ }
+}
+
 async function job(action,body={},page=S.page){
  const v=view(page);if(v.job)throw Error('此页面已有任务运行，可以切换到其他页面。');
  v.taskFailed=false;v.job={action,phase:'正在提交本地任务…'};syncTaskUI();
- try{const {job_id}=await api(action,{...body,_page:page});v.job.id=job_id;while(true){const j=await api('jobs/'+job_id);v.job.phase=(j.state==='queued'?'正在排队，前一项任务完成后继续':j.phase)+(j.total?` · 已完成 ${j.completed||0} / ${j.total} 项`:'');syncTaskUI();if(j.state==='error'){const error=Error(j.error);error.cancelled=j.cancelled;throw error;};if(j.state==='done')return j.result;await new Promise(r=>setTimeout(r,250));}}
+ try{const {job_id}=await api(action,{...body,_page:page,_request_id:crypto.randomUUID()});v.job.id=job_id;while(true){const j=await api('jobs/'+job_id);v.job.phase=(j.state==='queued'?'正在排队，前一项任务完成后继续':j.phase)+(j.total?` · 已完成 ${j.completed||0} / ${j.total} 项`:'');syncTaskUI();if(j.state==='error'){const error=Error(j.error);error.cancelled=j.cancelled;throw error;};if(j.state==='done')return j.result;await new Promise(r=>setTimeout(r,250));}}
  catch(error){v.taskFailed=!error.cancelled;note(error.message,!error.cancelled,page);throw error;}
  finally{v.job=null;if(S.page!==page)v.unread++;view('history').dirty=true;syncTaskUI();}
 }

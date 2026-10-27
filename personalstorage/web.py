@@ -38,6 +38,7 @@ class Desktop:
         self.previews = {}
         self.jobs = {}
         self.job_stops={}
+        self.request_jobs={};self.request_guard=threading.Lock()
         self.downloads = {}
         self.ai_packets = {}
         self.scan_cache = {}
@@ -110,7 +111,23 @@ class Desktop:
             finally:self.search_stops.pop(ident,None)
         self.read_pool.submit(run);return {'job_id':ident}
 
-    def job(self, action, body):
+    def job(self,action,body):
+        request=body.get('_request_id')
+        if request is None:return self._new_job(action,body)
+        import re
+        if not isinstance(request,str) or not re.fullmatch('[a-zA-Z0-9_-]{16,64}',request):raise SafetyError('请求标识无效')
+        fingerprint=digest([action,body])
+        with self.request_guard:
+            previous=self.request_jobs.get(request)
+            if previous:
+                if previous['fingerprint']!=fingerprint:raise SafetyError('同一请求标识不能用于不同操作')
+                return {'job_id':previous['id']}
+            result=self._new_job(action,body);self.request_jobs[request]={'id':result['job_id'],'fingerprint':fingerprint,'at':time.monotonic()}
+            for key,value in list(self.request_jobs.items()):
+                if time.monotonic()-value['at']>3600 and self.jobs.get(value['id'],{}).get('state') not in ('queued','running'):self.request_jobs.pop(key,None)
+            return result
+
+    def _new_job(self, action, body):
         audit=action=='library-audit'
         if audit:
             if not self.audit_guard.acquire(blocking=False):raise SafetyError('全库复核已在运行或排队')
@@ -146,7 +163,7 @@ class Desktop:
                 from .tasks import Cancelled
                 if isinstance(exc,Cancelled):outcome.update(cancelled=True,phase='已停止')
                 try:
-                    with self.app() as app:activity.update(app.state,ident,'error',phase='未完成',error=str(exc))
+                    with self.app() as app:activity.update(app.state,ident,'interrupted' if outcome.get('cancelled') else 'error',phase='已停止' if outcome.get('cancelled') else '未完成',error=str(exc))
                 except Exception:outcome['error']+='；本次任务记录未能保存'
             finally:
                 if safe_retry:
@@ -723,6 +740,7 @@ class Handler(BaseHTTPRequestHandler):
 
 class LocalServer(ThreadingHTTPServer):
     allow_reuse_address=False
+    request_queue_size=128
     def server_bind(self):
         import socket
         if hasattr(socket,'SO_EXCLUSIVEADDRUSE'):self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)

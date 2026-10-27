@@ -57,4 +57,4 @@ async function main(){
  assert(await page.locator('.rm-editor').isVisible());assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  assert.deepEqual(errors,[]);console.log('PASS visual rule drafts, reload, async navigation, simulation, publish, disabling, sample picker, task binding and runtime settings');
 }
-main().catch(async e=>{console.error(e);if(page)console.error(await page.locator('#notice').textContent());process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();child.stdin.write('stop\n');setTimeout(()=>child.kill(),1000).unref();});
+main().catch(async e=>{console.error(e);if(page)console.error(await page.locator('#notice').textContent());process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(fixture)fs.writeFileSync(fixture.stop,'stop');else child.kill();});

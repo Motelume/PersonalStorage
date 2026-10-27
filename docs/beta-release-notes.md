@@ -1,4 +1,4 @@
-# PersonalStorage 0.10.0b1
+# PersonalStorage 0.10.0b2
 
 这是供个人、同学和朋友使用的Windows x64测试版。项目以MIT许可公开在GitHub，不进行宣传推广；未经使用者确认，不标记为1.0。
 

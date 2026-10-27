@@ -65,6 +65,12 @@ class WebTests(unittest.TestCase):
         with self.assertRaises(OSError):make_server(self.root,self.base/'other-profile',self.server.server_port)
         self.assertEqual(self.request('bootstrap')['status']['root'],str(self.root))
 
+    def test_retried_submission_returns_one_job_and_rejects_changed_body(self):
+        body={'_request_id':'synthetic-retry-12345678','include_root':False}
+        first=self.request('scan',body);second=self.request('scan',body);self.assertEqual(first,second)
+        with self.assertRaises(HTTPError):self.request('scan',{**body,'include_root':True})
+        with self.server.desktop.app() as app:self.assertEqual(app.state.db.execute("SELECT COUNT(*) FROM ui_tasks WHERE action='scan'").fetchone()[0],1)
+
     def test_rule_draft_preview_publish_and_browser_sample_scope(self):
         original=self.file('note.txt');initial=(self.root/'_整理规则/分类配置.json').read_bytes()
         status=self.request('rules');edit=status['live'];edit['rules'][0]['rule']['all'][0]['value']='new.txt'

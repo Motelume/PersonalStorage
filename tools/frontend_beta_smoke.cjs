@@ -21,7 +21,16 @@ async function main(){
  await nav('settings');await tab('runtime');await page.locator('summary').filter({hasText:'备份与恢复向导'}).click();const download=page.waitForEvent('download');await wb('backup');await download;
  await page.locator('[data-wb=restore]').first().click();await idle();await page.getByRole('button',{name:'确认执行',exact:true}).waitFor();await page.getByRole('button',{name:'取消',exact:true}).click();
  await page.locator('summary').filter({hasText:'通用规则包升级'}).click();await wb('package');await page.getByRole('button',{name:'取消',exact:true}).click();
- await page.locator('summary').filter({hasText:'任务继续与运行诊断'}).click();await wb('diagnostics');assert((await page.locator('dialog pre').textContent()).includes('database_integrity'));await page.locator('dialog [data-action=close-modal]').click();
+ await page.locator('summary').filter({hasText:'任务继续与运行诊断'}).click();
+ // Lose an acknowledgement after the server accepted the job, then lose one poll.
+ // Transport retry must reuse the request ID and create exactly one task.
+ const countDiagnostics=()=>page.evaluate(async()=>(await api('activity')).rows.filter(r=>r.task?.action==='wb-diagnostics').length);
+ const diagnosticsBefore=await countDiagnostics();let submissions=0,polls=0;
+ await page.route('**/api/wb-diagnostics',async route=>{if(++submissions===1){await route.fetch();await route.abort('connectionreset');}else await route.continue();});
+ await page.route('**/api/jobs/*',async route=>{if(++polls===1)await route.abort('connectionreset');else await route.continue();});
+ await wb('diagnostics');assert((await page.locator('dialog pre').textContent()).includes('database_integrity'));
+ assert.equal(submissions,2);assert(polls>=2);assert.equal(await countDiagnostics(),diagnosticsBefore+1);
+ await page.unroute('**/api/wb-diagnostics');await page.unroute('**/api/jobs/*');await page.locator('dialog [data-action=close-modal]').click();
  // Discard the uncommitted rule draft before a real task lifecycle operation.
  await tab('test');await rm('reset');await rm('reset-confirm');await tab('tasks');await page.locator('#wb-lifecycle').selectOption('completed');await wb('lifecycle');await wb('confirm');
  assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程（已完成）')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/note.txt')));
