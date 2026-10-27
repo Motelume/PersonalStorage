@@ -49,7 +49,7 @@ function reconcileReviewFocus(previousRows){
  const rows=pageRows('review'),key=reviewKey(previous);let next=rows.find(r=>reviewKey(r)===key);
  if(!next){const index=previousRows.findIndex(r=>reviewKey(r)===key);for(const old of previousRows.slice(index+1)){next=rows.find(r=>reviewKey(r)===reviewKey(old));if(next)break;}next=next||rows[0];}
  const changed=!next||reviewKey(next)!==key;
- if(changed||next.available!==previous.available||JSON.stringify(next.details)!==JSON.stringify(previous.details))v.detail=null;
+ if(changed||(next.id_handle||next.id)!==previous.id||next.available!==previous.available||JSON.stringify(next.details)!==JSON.stringify(previous.details))v.detail=null;
  v.focus=next?{...next,id:next.id_handle||next.id,record_id:next.id}:null;
  if(changed){v.preview=null;v.aiTicket=null;v.undoTicket=null;}
  return changed;

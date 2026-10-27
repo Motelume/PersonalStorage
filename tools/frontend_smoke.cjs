@@ -44,6 +44,9 @@ async function run(){
  assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/unknown.txt')));
  await nav('review');await p.locator('tbody tr').filter({hasText:'unknown.txt'}).click();
  await p.getByRole('button',{name:'读取详情与预览'}).click();await idle();
+ const oldReviewHandle=await p.evaluate(()=>S.focus.id);await p.locator('#refresh').click();await p.waitForFunction(previous=>S.focus?.id!==previous,oldReviewHandle);await idle();assert.equal(await p.locator('#detail .detail-name strong').textContent(),'unknown.txt');
+ assert(await p.getByRole('button',{name:'保留当前归属'}).isDisabled());
+ await p.getByRole('button',{name:'读取详情与预览'}).click();await idle();
  const afterKeep=await nextReviewName();assert(afterKeep);
  await p.getByRole('button',{name:'保留当前归属'}).click();await idle();
  await p.getByText('已保留当前归属。',{exact:true}).waitFor();
