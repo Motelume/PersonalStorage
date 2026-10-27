@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from .common import safe_path,manifest,digest,now,write_json,SafetyError,uid
 from .extraction import extract
+from .inboxes import resolve as resolve_source
 
 ACTIVE_STATUSES = ('pending', 'waiting_user', 'waiting_content', 'correction_required')
 
@@ -21,7 +22,7 @@ def resolve_external(root, state, review_id, expected_context):
             return {'review_id': review_id, 'status': 'resolved_external', 'already_resolved': True, 'files_touched': False}
         if row['status'] not in ACTIVE_STATUSES or review_context(row) != expected_context:
             raise SafetyError('待办已变化或已完成，请刷新后重试')
-        source = safe_path(root, row['path'])
+        source = resolve_source(root,state,row['path'],enabled=False)
         try:
             source.stat()
         except FileNotFoundError:
@@ -43,7 +44,7 @@ def export_tasks(root,state,policy,target,with_content=False,limit=30):
     for row in rows:
         r=dict(row); data=json.loads(r['data'])
         try:
-            p=safe_path(root,r['path']); m=manifest(p); ver=digest(m)
+            p=resolve_source(root,state,r['path']); m=manifest(p); ver=digest(m)
         except (OSError,SafetyError):
             with state.db: state.db.execute("UPDATE reviews SET status='waiting_content' WHERE id=?",(r['id'],))
             continue
@@ -67,7 +68,7 @@ def export_tasks(root,state,policy,target,with_content=False,limit=30):
     write_json(target,output)
     return output
 
-def import_results(root,state,policy,payload):
+def import_results(root,state,policy,payload,*,allow_locked=False):
     if payload.get('schema_version')!='1.0' or payload.get('policy_hash')!=policy.hash: raise SafetyError('审核协议或规则版本不匹配')
     if not isinstance(payload.get('items'),list) or not all(isinstance(x,dict) for x in payload['items']): raise SafetyError('items必须是审核决定对象列表')
     results=[]
@@ -77,7 +78,7 @@ def import_results(root,state,policy,payload):
             row=state.db.execute('SELECT r.*,i.path FROM reviews r JOIN items i ON i.id=r.item_id WHERE r.id=?',(result['review_id'],)).fetchone()
             if not row or row['status'] not in ('pending','waiting_user','waiting_content','correction_required'): raise SafetyError('待审任务不存在或已完成')
             if result.get('item_id') not in (None,row['item_id']): raise SafetyError('对象ID不匹配')
-            p=safe_path(root,row['path']); m=manifest(p); ver=digest(m)
+            p=resolve_source(root,state,row['path']); m=manifest(p); ver=digest(m)
             a=state.db.execute('SELECT version,data FROM assignments WHERE item_id=?',(row['item_id'],)).fetchone()
             assignment=json.loads(a['data']) if a else {}
             if result.get('expected_version')!=ver or result.get('assignment_fingerprint')!=digest(assignment): raise SafetyError('审核期间内容或归属发生变化')
@@ -86,7 +87,7 @@ def import_results(root,state,policy,payload):
             if d=='confirm' and not assignment: raise SafetyError('未分类文件不能仅用confirm代替明确目标')
             if d=='confirm' and assignment.get('destination_parent')==policy.data['review_path']: raise SafetyError('待确认位置不是已解决归属，需提供明确目标')
             if d=='suggest_reclassify':
-                if assignment.get('manual_locked'): raise SafetyError('人工指定归属已锁定，建议待用户另行决定')
+                if assignment.get('manual_locked') and not allow_locked: raise SafetyError('人工指定归属已锁定，建议待用户另行决定')
                 if not result.get('reason'): raise SafetyError('缺少建议依据')
                 policy.target(result['target_parent'],p.name)
             status={'confirm':'confirmed','needs_user_input':'waiting_user','suggest_reclassify':'correction_required'}[d]

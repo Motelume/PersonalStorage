@@ -5,7 +5,8 @@ from .extraction import extract
 
 def in_scope(source,include_root=False,include_review=False,allow_existing=False):
     source=relpath(source)
-    if source.split('/')[-1].casefold()=='agents.md' or source.startswith(('_整理规则/','09_移动硬盘管理/','99_临时待整理/')): return False
+    if source.split('/')[-1].casefold()=='agents.md' or source.startswith(('_整理规则/','09_移动硬盘管理/')): return False
+    if source.startswith('99_临时待整理/'):return include_review and allow_existing
     if source.startswith('00_收件箱/待确认/'): return include_review
     if source=='00_收件箱/待确认': return False
     if source.startswith('00_收件箱/'): return True

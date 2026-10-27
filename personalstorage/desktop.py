@@ -76,6 +76,10 @@ def main(argv=None):
     window=webview.create_window('PersonalStorage',server.desktop.url,width=1400,height=940,
         min_size=(850,650),background_color='#f5f7fb',text_select=True,
         menu=[Menu('设置',[MenuAction('选择资料目录（下次启动生效）',change_root)])])
+    def pick_inbox():
+        selected=window.create_file_dialog(webview.FileDialog.FOLDER)
+        return selected[0] if selected else None
+    server.desktop.folder_picker=pick_inbox
     finished=threading.Event()
     def closed():
         finished.set();server.desktop.stop.set()
@@ -100,7 +104,7 @@ def main(argv=None):
                 time.sleep(.1)
             else:raise SafetyError('桌面页面未完成加载')
             data=window.evaluate_js('({version:S.boot.app_version,root:S.boot.status.root,mode:S.boot.ui_mode,pages:document.querySelectorAll("nav button").length,model_enabled:S.boot.model_enabled})')
-            if data['mode']!='desktop' or data['pages']!=5:raise SafetyError('桌面界面状态不正确')
+            if data['mode']!='desktop' or data['pages']!=6:raise SafetyError('桌面界面状态不正确')
             window.evaluate_js('load("ai");true')
             for _ in range(100):
                 if window.evaluate_js('document.getElementById("ai-key") !== null'):break

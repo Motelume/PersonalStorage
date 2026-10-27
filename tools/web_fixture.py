@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
     server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
-    if '--ai-fixture' in sys.argv or '--workspace-fixture' in sys.argv:
+    if '--ai-fixture' in sys.argv or '--workspace-fixture' in sys.argv or '--intelligent-fixture' in sys.argv:
         from test_ai import FakeProvider
         provider=FakeProvider()
         server.desktop.credential_vault.save('sk-'+'synthetic-fixture-key'*2)
@@ -47,7 +47,8 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
                 activity.begin(app.state,'fixture-'+str(index),'scan','inbox')
                 activity.update(app.state,'fixture-'+str(index),'done',result={'rows':[]})
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
-    print(json.dumps({'url':server.desktop.url,'root':str(root),'stop':str(base/'stop')}),flush=True)
+    downloads=base/'downloads';downloads.mkdir();(downloads/'download.txt').write_text('course')
+    print(json.dumps({'url':server.desktop.url,'root':str(root),'downloads':str(downloads),'stop':str(base/'stop')}),flush=True)
     try:
         while not (base/'stop').exists(): time.sleep(.2)
     finally:

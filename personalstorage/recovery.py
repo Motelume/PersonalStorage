@@ -9,6 +9,12 @@ def recover(root,state,policy):
         for row in rows:
             op=json.loads(row['data'])
             try:
+                if op.get('operation_type')=='external_copy':
+                    dst=safe_path(root,op['target'])
+                    if dst.exists() and manifest(dst)==op['manifest']:state.register(op);status='committed'
+                    elif not dst.exists():state.op(op['id'],'failed',{**op,'error':'归档副本未发布，外部原件保留'});status='source_retained'
+                    else:state.op(op['id'],'recovery_required',{**op,'error':'副本状态需核对；不会删除外部原件'});status='manual_required'
+                    out.append({'operation_id':op['id'],'status':status});continue
                 src=safe_path(root,op['source']); dst=safe_path(root,op['target'])
                 if not src.exists() and dst.exists() and manifest(dst)==op['manifest']:
                     # Recovery only reconciles an already completed move, never executes a new move.

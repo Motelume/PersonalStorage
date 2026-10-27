@@ -21,7 +21,7 @@ from .recovery import undo
 from .review import resolve_external, review_context
 from .ai import AIManager
 from . import __version__
-from . import activity, scanning
+from . import activity, scanning, inboxes, importing, classification, ai_audit
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -39,6 +39,8 @@ class Desktop:
         self.downloads = {}
         self.ai_packets = {}
         self.scan_cache = {}
+        self.audit_stop=threading.Event()
+        self.audit_guard=threading.Lock()
         self.credential_vault = None
         self.ai_provider_factory = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='storage-ui')
@@ -70,10 +72,18 @@ class Desktop:
         return self.objects[ident]
 
     def job(self, action, body):
+        audit=action=='library-audit'
+        if audit:
+            if not self.audit_guard.acquire(blocking=False):raise SafetyError('全库复核已在运行或排队')
+            self.audit_stop.clear()
         ident = uid()
         page=body.get('_page')
         self.jobs[ident] = {'id': ident, 'state': 'queued', 'phase': '等待处理', 'at': now(), 'page':page}
-        with self.app() as app:activity.begin(app.state,ident,action,page)
+        try:
+            with self.app() as app:activity.begin(app.state,ident,action,page)
+        except BaseException:
+            if audit:self.audit_guard.release()
+            raise
         def work():
             job = self.jobs[ident]
             job.update(state='running', phase='核对与处理')
@@ -86,6 +96,8 @@ class Desktop:
             except Exception as exc:
                 job.update(state='error', phase='未完成', error=str(exc))
                 with self.app() as app:activity.update(app.state,ident,'error',phase='未完成',error=str(exc))
+            finally:
+                if audit:self.audit_guard.release()
         self.pool.submit(work)
         return {'job_id': ident}
 
@@ -95,7 +107,7 @@ class Desktop:
             s.update(watching=bool(self.watch and self.watch.is_alive()), watch_error=self.watch_error)
             auth = app.state.get('automation')
             ai = AIManager(app, vault=self.credential_vault).status()
-            return {'app_version':__version__,'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash, 'ai':ai,'ui_mode':'desktop' if getattr(self,'native_mode',False) else 'web',
+            return {'app_version':__version__,'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash, 'ai':ai,'library_audit':app.state.get('library_audit'),'ui_mode':'desktop' if getattr(self,'native_mode',False) else 'web',
                     'authorization_current': bool(auth and auth['policy_hash'] == app.policy.hash),
                     'authorization_scope_root': bool(auth and auth.get('include_root')),
                     'model_enabled': ai['settings']['enabled'] and ai['configured']}
@@ -104,11 +116,14 @@ class Desktop:
         with self.app() as app:
             out = reports.resolved_reviews(app.state) if history else reports.pending(app.state)
             for r in out:
+                r['user_context']=app.state.get('classification_notes',{}).get(r['path'],'')
                 context = review_context({'id': r['review_id'], 'path': r['path'],
                     'status': r['status'], 'data': json.dumps(r['details'], ensure_ascii=False)})
                 r['id'] = self.object(r['path'], review_id=r['review_id'], review_context_hash=context)
                 try:
-                    r['available'] = safe_path(self.root, r['path']).exists()
+                    actual=inboxes.resolve(self.root,app.state,r['path'],enabled=False)
+                    r['available']=actual.exists();r['absolute_path']=str(actual)
+                    if r['path'].startswith(inboxes.PREFIX):r['external']=True;r['source_label']=inboxes.source_record(app.state,r['path'].split('/')[1],enabled=False)['label']
                 except SafetyError:
                     r['available'] = False
                 if not r['available'] and not history:
@@ -161,6 +176,13 @@ class Desktop:
             {k: v for k, v in a.items() if k != 'manifest'} for a in plan['actions']]}
 
     def perform(self, app, action, b, job):
+        if action=='inbox-add':return inboxes.add(app.root,app.state,b.get('path'),b.get('label',''))
+        if action=='inbox-toggle':return inboxes.toggle(app.state,b.get('id'),b.get('enabled'))
+        if action=='inbox-remove':return inboxes.remove(app.state,b.get('id'))
+        if action=='library-audit':
+            if b.get('confirmed') is not True:raise SafetyError('请通过全库复核按钮确认范围与批次上限后启动')
+            manager=AIManager(app,vault=self.credential_vault,provider_factory=self.ai_provider_factory)
+            return ai_audit.run(app,manager,job,self.audit_stop,b.get('max_batches',20))
         if action.startswith('ai-'):
             manager=AIManager(app, vault=self.credential_vault, provider_factory=self.ai_provider_factory)
             if action=='ai-configure':return manager.configure(b)
@@ -169,40 +191,51 @@ class Desktop:
             if action=='ai-prepare':
                 ids=b.get('ids')
                 if not isinstance(ids,list) or not ids or len(ids)>10:raise SafetyError('请选择1至10项资料')
-                packet=manager.prepare([self.get(i) for i in ids])
+                contexts=b.get('user_context',{})
+                packet=manager.prepare([self.get(i) for i in ids],contexts,allow_manual_override=b.get('override_locked') is True)
                 self.ai_packets[packet['id']]=packet
                 return {'ticket':packet['id'],'model':packet['config']['model'],'with_content':packet['config']['with_content'],
                     'target_count':len(packet['request']['candidate_targets']),
-                    'items':[{'name':d['name'],'source':d['source'],'excerpt':d['text'],'members':d['members'],'warnings':d['warnings']} for d in packet['request']['documents']]}
+                    'items':[{'name':d['name'],'source':d['source'],'excerpt':d['text'],'members':d['members'],'warnings':d['warnings'],'user_context':d.get('user_context','')} for d in packet['request']['documents']]}
             if action=='ai-run':
                 packet=self.ai_packets.pop(b.get('ticket'),None)
                 if not packet:raise SafetyError('AI发送预览已失效，请重新选择')
                 job['phase']='DeepSeek正在审核，等待结构化结果'
-                return manager.run(packet)
+                result=manager.run(packet)
+                for obj in list(self.objects.values()):
+                    if obj.get('path') in {item['path'] for item in packet['bindings']} and not obj.get('directory'):classification.promote(app,obj)
+                return result
             if action=='ai-adopt':
                 obj=self.get(b['id'])
                 row=app.state.db.execute('SELECT r.*,i.path FROM reviews r JOIN items i ON i.id=r.item_id WHERE r.id=?',(obj.get('review_id'),)).fetchone()
                 if not row or row['status']!='correction_required' or review_context(row)!=obj.get('review_context_hash'):raise SafetyError('建议已变化，请刷新待办')
                 data=json.loads(row['data']);result=data.get('result',{})
                 if result.get('decision')!='suggest_reclassify':raise SafetyError('没有可采用的归属建议')
-                if digest(manifest(safe_path(app.root,obj['path'])))!=data['version']:raise SafetyError('资料已变化，请重新审核')
+                if digest(manifest(inboxes.resolve(app.root,app.state,obj['path'])))!=data['version']:raise SafetyError('资料已变化，请重新审核')
                 parent=result['target_parent']
                 if not safe_path(app.root,parent).is_dir():raise SafetyError('建议目录已不存在')
                 self.perform(app,'detail',b,job)
+                classification.promote(app,obj)
                 return self.perform(app,'preview',{'ids':[b['id']],'target_id':self.object(parent,directory=True),
                     'evidence':'用户采用AI建议：'+result.get('reason','')},job)
         if action == 'scan':
+            scan_started=time.monotonic()
             job['phase'] = '快速读取收件箱，生成归属建议'
             def progress(completed,total):job.update(completed=completed,total=total)
-            result=scanning.scan(app.root,app.policy,self.scan_cache,include_root=b.get('include_root') is True,progress=progress)
-            rows = []
+            result=scanning.scan(app.root,app.policy,self.scan_cache,include_root=b.get('include_root') is True,progress=progress) if inboxes.settings(app.state)['internal_enabled'] else {'rows':[],'scanned_at':now(),'elapsed_ms':0}
+            external=inboxes.scan_external(app.root,app.state,app.policy,self.scan_cache)
+            result['rows'].extend(external['rows']);result.update(source_errors=external['source_errors'],already_imported=external['already_imported'])
+            rows = [];objects=[]
             for a in result['rows']:
                 ident = self.object(a['source'], fingerprint=None, scan_fingerprint=a.get('scan_fingerprint'), action=a,
                                     policy_hash=app.policy.hash, include_root=b.get('include_root') is True)
                 rows.append({'id':ident,**a})
-            return {**result,'rows':rows}
+                objects.append(self.get(ident))
+            if b.get('use_ai') is True:
+                result['classification']=classification.fallback(app,AIManager(app,vault=self.credential_vault,provider_factory=self.ai_provider_factory),rows,objects,job)
+            return {**result,'rows':rows,'elapsed_ms':round((time.monotonic()-scan_started)*1000)}
         if action == 'detail':
-            obj = self.get(b['id']); path = safe_path(self.root, obj['path'])
+            obj = self.get(b['id']); path = inboxes.resolve(self.root,app.state,obj['path'])
             m = manifest(path); obj['fingerprint'] = digest(m)
             result = {'path': obj['path'], 'absolute_path': str(path), 'fingerprint': digest(m),
                       'features': extract(path, limit=8000), 'file_count': len(m['files']),
@@ -218,54 +251,77 @@ class Desktop:
                 result['assignment'] = assignment
             return result
         if action == 'preview':
-            ids = b.get('ids', [])
-            if not isinstance(ids, list) or not ids or len(ids) > 500: raise SafetyError('请选择1至500项')
-            objs = [self.get(i) for i in ids]
-            manual = bool(b.get('target_id'))
-            waiting = b.get('waiting') is True
-            if manual and len(objs) != 1: raise SafetyError('人工目标仅影响当前一项')
-            target = self.get(b['target_id']) if manual else None
-            if target and not target.get('directory'): raise SafetyError('请选择已有目录')
-            decisions = {}
+            from .common import write_json
+            ids=b.get('ids',[])
+            if not isinstance(ids,list) or not ids or len(ids)>500 or len(set(ids))!=len(ids):raise SafetyError('请选择1至500个不同对象')
+            objs=[self.get(i) for i in ids];manual=bool(b.get('target_id'));waiting=b.get('waiting') is True
+            if manual and len(objs)!=1:raise SafetyError('人工目标仅影响当前一项')
+            target=self.get(b['target_id']) if manual else None
+            if target and not target.get('directory'):raise SafetyError('请选择已有目录')
+            if manual and not str(b.get('evidence','')).strip():raise SafetyError('请填写本次归属依据')
+            internal=[];external=[];decisions={}
             for obj in objs:
-                if obj.get('policy_hash') and obj['policy_hash'] != app.policy.hash: raise SafetyError('规则已变化，请重新扫描')
-                if obj.get('scan_fingerprint') and scanning.metadata(safe_path(self.root,obj['path']))['fingerprint']!=obj['scan_fingerprint']:
-                    raise SafetyError('文件已变化，请重新扫描或查看详情')
-                if obj.get('fingerprint') and digest(manifest(safe_path(self.root, obj['path']))) != obj['fingerprint']:
-                    raise SafetyError('文件已变化，请重新扫描或查看详情')
+                if obj.get('policy_hash') and obj['policy_hash']!=app.policy.hash:raise SafetyError('规则已变化，请重新扫描')
+                source=inboxes.resolve(app.root,app.state,obj['path'])
+                if obj.get('scan_fingerprint') and scanning.metadata(source)['fingerprint']!=obj['scan_fingerprint']:raise SafetyError('文件已变化，请重新扫描')
+                m=manifest(source);fingerprint=digest(m)
+                if obj.get('fingerprint') and obj['fingerprint']!=fingerprint:raise SafetyError('文件版本已变化，请重新扫描或读取详情')
                 if not obj.get('scan_fingerprint') and not obj.get('fingerprint'):raise SafetyError('请先扫描或读取详情')
-                if not manual:
-                    expected = 'review' if waiting else 'move'
-                    if obj.get('action', {}).get('decision') != expected: raise SafetyError('包含不可执行项')
+                obj['fingerprint']=fingerprint
+                expected='review' if waiting else 'move'
+                if not manual and obj.get('action',{}).get('decision')!=expected:raise SafetyError('包含尚未确定目标或不可执行的资料')
+                if obj['path'].startswith(inboxes.PREFIX):
+                    if waiting:raise SafetyError('外部资料可直接保留原位待确认，无需复制到待确认目录')
+                    external.append(obj)
                 else:
-                    if not str(b.get('evidence', '')).strip(): raise SafetyError('请填写本次归属依据')
-                    if not obj.get('fingerprint'):obj['fingerprint']=digest(manifest(safe_path(self.root,obj['path'])))
-                    decisions[obj['path']] = {'target_parent': target['path'], 'manifest_hash': obj['fingerprint'], 'evidence': str(b['evidence'])[:2000]}
-            plan = app.plan(sources=[o['path'] for o in objs], include_root=manual or any(o.get('include_root') for o in objs),
-                include_review=manual, allow_existing=manual, decisions=decisions, approve_decisions=manual)
-            expected = 'review' if waiting else 'move'
-            if any(a['decision'] != expected for a in plan['actions']):
-                raise SafetyError('计划中有冲突或不可执行项，请重新扫描或选择目标')
-            for obj, a in zip(objs, plan['actions']):
-                if obj.get('fingerprint') and a.get('manifest_hash') != obj['fingerprint']: raise SafetyError('文件在预览时变化，请重新扫描')
-                if obj.get('scan_fingerprint') and scanning.metadata(safe_path(self.root,obj['path']))['fingerprint']!=obj['scan_fingerprint']:raise SafetyError('文件在预览时变化，请重新扫描')
-                if not manual and a.get('target')!=obj['action'].get('target'):raise SafetyError('归属建议已变化，请重新扫描')
-                obj['fingerprint']=a.get('manifest_hash')
-            self.previews[plan['id']] = {'plan': plan, 'time': time.monotonic(), 'used': False, 'objects': [dict(o) for o in objs]}
+                    internal.append(obj)
+                    if manual or obj.get('action',{}).get('ai_classified'):
+                        decisions[obj['path']]={'target_parent':target['path'] if manual else obj['action']['target_parent'],
+                            'manifest_hash':fingerprint,'evidence':str(b.get('evidence',''))[:2000] if manual else obj['action']['evidence']}
+            parts=[]
+            if internal:
+                plan=app.plan(sources=[o['path'] for o in internal],include_root=manual or any(o.get('include_root') for o in internal),
+                    include_review=manual or any(o.get('review_id') for o in internal),allow_existing=manual or any(o.get('review_id') for o in internal),
+                    decisions=decisions,approve_decisions=bool(decisions))
+                expected='review' if waiting else 'move'
+                for obj,item in zip(internal,plan['actions']):
+                    if item['decision']!=expected:raise SafetyError('计划中有冲突或尚未确定的归属')
+                    if item.get('manifest_hash')!=obj['fingerprint']:raise SafetyError('预览期间资料已变化')
+                    if not manual and item.get('target')!=obj['action'].get('target'):raise SafetyError('归属建议已变化，请重新扫描')
+                    if obj.get('action',{}).get('classification_verified'):item['classification_verified']=True
+                    if obj.get('action',{}).get('ai_classified'):
+                        item['ai_classified']=True
+                        if not manual:item.update(manual=False,rule_id='ai_classification')
+                with app.state.db:app.state.db.execute('UPDATE plans SET data=? WHERE id=?',(json.dumps(plan,ensure_ascii=False),plan['id']))
+                write_json(app.root/'_整理规则/执行记录'/plan['id']/'plan.json',plan);parts.append(plan)
+            if external:parts.append(importing.build(app,external,target_parent=target['path'] if manual else None,evidence=str(b.get('evidence',''))[:2000]))
+            actions=[item for part in parts for item in part['actions']]
+            if len({item['target'].casefold() for item in actions})!=len(actions):raise SafetyError('多个来源存在同名目标，不能同时归档')
+            plan=parts[0] if len(parts)==1 else {'id':uid(),'type':'mixed','created_at':now(),'policy_hash':app.policy.hash,'actions':actions}
+            self.previews[plan['id']]={'plan':plan,'parts':parts,'time':time.monotonic(),'used':False,'objects':[dict(obj) for obj in objs]}
             return self.public_plan(plan)
         if action == 'execute':
-            preview = self.previews.get(b.get('plan_id'))
-            if not preview or preview['used'] or time.monotonic() - preview['time'] > 900: raise SafetyError('预览已失效，请重新预览')
-            plan = preview['plan']
-            if plan['policy_hash'] != app.policy.hash: raise SafetyError('规则已变化，请重新预览')
-            for obj, a in zip(preview['objects'], plan['actions']):
-                if digest(manifest(safe_path(self.root, a['source']))) != a['manifest_hash']: raise SafetyError('源文件已变化，请重新预览')
+            preview=self.previews.get(b.get('plan_id'))
+            if not preview or preview['used'] or time.monotonic()-preview['time']>900:raise SafetyError('预览已失效，请重新预览')
+            plan=preview['plan']
+            if plan['policy_hash']!=app.policy.hash:raise SafetyError('规则已变化，请重新预览')
+            for obj in preview['objects']:
+                if digest(manifest(inboxes.resolve(app.root,app.state,obj['path'])))!=obj['fingerprint']:raise SafetyError('源文件已变化，请重新预览')
                 if obj.get('assignment_fingerprint'):
-                    row = app.state.db.execute('SELECT a.data FROM items i JOIN assignments a ON a.item_id=i.id WHERE i.path=?', (obj['path'],)).fetchone()
-                    if digest(json.loads(row[0]) if row else {}) != obj['assignment_fingerprint']: raise SafetyError('归属已变化，请刷新待办')
-            preview['used'] = True
-            job.update(phase='移动并核验（逐项记录）', run_id=plan['id'], total=len(plan['actions']))
-            return app.execute(plan['id'])
+                    row=app.state.db.execute('SELECT a.data FROM items i JOIN assignments a ON a.item_id=i.id WHERE i.path=?',(obj['path'],)).fetchone()
+                    if digest(json.loads(row[0]) if row else {})!=obj['assignment_fingerprint']:raise SafetyError('归属已变化，请刷新待办')
+            preview['used']=True;results=[]
+            for part in preview.get('parts',[plan]):
+                job.update(phase='校验复制，保留外部原件' if part.get('type')=='external_copy' else '移动并核验',run_id=part['id'],total=len(part['actions']))
+                result=importing.execute(app,part) if part.get('type')=='external_copy' else app.execute(part['id'])
+                results.extend(result['results'])
+                for action,row in zip(part['actions'],result['results']):
+                    if row['status']=='committed' and action.get('ai_classified'):
+                        try:
+                            target=safe_path(app.root,action['target'])
+                            ai_audit.save(app,action['target'],manifest(target),AIManager(app).settings()['model'],'confirm','AI确定归属并已由用户执行核验')
+                        except (OSError,SafetyError):pass
+            return {'run_id':plan['id'],'results':results}
         if action == 'keep':
             obj = self.get(b['id'])
             context = obj.get('review_context')
@@ -291,6 +347,7 @@ class Desktop:
             row = app.state.db.execute("SELECT data FROM operations WHERE id=? AND status='committed'", (obj.get('operation_id'),)).fetchone()
             if not row: raise SafetyError('只能撤销已完成操作')
             op = json.loads(row[0])
+            if op.get('operation_type')=='external_copy':raise SafetyError('外部归档保留原件，不自动删除已归档副本')
             if safe_path(self.root, op['source']).exists(): raise SafetyError('原位置已占用，无法撤销')
             if manifest(safe_path(self.root, op['target'])) != op['manifest']: raise SafetyError('内容已变化，无法撤销')
             if app.state.get('paused', False): raise SafetyError('执行已暂停，请先恢复')
@@ -349,6 +406,7 @@ class Desktop:
 
     def close(self):
         self.stop.set()
+        self.audit_stop.set()
         if self.watch: self.watch.join()
         self.pool.shutdown(wait=True)
 
@@ -385,6 +443,8 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == '/api/pending': result = d.pending()
             elif url.path == '/api/review-history': result = d.pending(history=True)
             elif url.path == '/api/operations': result = d.operations()
+            elif url.path == '/api/inboxes':
+                with d.app() as app:result=inboxes.listing(app.root,app.state)
             elif url.path == '/api/activity':result=d.history(int(q.get('offset',['0'])[0]),q.get('query',[''])[0],q.get('status',['all'])[0])
             elif url.path == '/api/directories': result = d.directory(q.get('id', [None])[0])
             elif url.path.startswith('/api/jobs/'):
@@ -395,9 +455,9 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css','/ai.js'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
-                types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
+                types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8','management.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
                 return self.send(200, (STATIC / name).read_bytes(), types[name])
             else: return self.send(404, {'error':'页面不存在'})
             self.send(200, result)
@@ -422,16 +482,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, {'stopping':True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
+            elif action=='audit-stop':d.audit_stop.set();result={'stop_requested':True,'current_batch_will_finish':True}
+            elif action=='inbox-pick':
+                picker=getattr(d,'folder_picker',None)
+                if not picker:raise SafetyError('网页版请粘贴文件夹绝对路径，桌面版可使用选择器')
+                result={'path':picker()}
             elif action == 'open':
                 if b.get('root') == 'library': target = d.root
                 elif b.get('root') == 'inbox': target = safe_path(d.root, '00_收件箱')
+                elif b.get('inbox_id'):
+                    with d.app() as app:target=inboxes.source_root(d.root,app.state,b['inbox_id'],enabled=False)
                 else:
-                    target = safe_path(d.root, d.get(b.get('id'))['path'])
+                    with d.app() as app:target=inboxes.resolve(d.root,app.state,d.get(b.get('id'))['path'],enabled=False)
                     if not target.is_dir(): target = target.parent
                 if not target.is_dir(): raise SafetyError('目录不存在')
                 os.startfile(str(target))
                 result = {'opened':True}
-            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot'}:
+            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-remove','library-audit'}:
                 result = d.job(action, b)
             else: raise SafetyError('未知操作')
             self.send(200, result)

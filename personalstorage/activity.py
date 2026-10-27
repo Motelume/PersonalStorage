@@ -13,11 +13,12 @@ TITLES={'scan':'扫描收件箱','detail':'读取资料详情','preview':'生成
         'snapshot':'导出管理快照','ai-prepare':'准备AI发送预览','ai-run':'DeepSeek审核',
         'ai-adopt':'采用AI建议并预览','ai-test':'测试DeepSeek连接','ai-configure':'保存AI设置',
         'ai-clear-key':'移除AI密钥','pause':'调整执行暂停','authorize':'保存后台授权',
-        'revoke':'撤销后台授权','watch-start':'启动后台','watch-stop':'停止后台'}
+        'revoke':'撤销后台授权','watch-start':'启动后台','watch-stop':'停止后台',
+        'inbox-add':'添加收件箱','inbox-toggle':'调整收件箱监测','inbox-remove':'移除收件箱来源','library-audit':'全库位置复核'}
 
 
 def begin(state,ident,action,page=None):
-    at=now();owner=page if page in ('inbox','review','history','settings','ai') else PAGE.get(action,'ai' if action.startswith('ai-') else 'settings')
+    at=now();owner=page if page in ('inbox','inboxes','review','history','settings','ai') else PAGE.get(action,'ai' if action.startswith('ai-') else 'settings')
     cutoff=(datetime.fromisoformat(at)-timedelta(days=7)).isoformat(timespec='seconds')
     with state.db:
         state.db.execute("DELETE FROM ui_tasks WHERE finished_at IS NOT NULL AND finished_at<?",(cutoff,))
@@ -29,6 +30,7 @@ def update(state,ident,status,*,phase=None,result=None,error=None):
     summary=None
     if result is not None:
         if isinstance(result,dict) and 'rows' in result:summary=f"扫描完成，共{len(result['rows'])}项；{result.get('elapsed_ms',0)}毫秒"
+        elif isinstance(result,dict) and 'approved' in result:summary=f"复核状态：{result['status']}；位置合理{result['approved']}项，建议调整{result['suggestions']}项，待补充{result['needs_input']}项；复用{result['cache_hits']}项"
         elif isinstance(result,dict) and 'results' in result:summary=f"处理完成，共{len(result['results'])}项"
         elif isinstance(result,list):summary=f'处理完成，共{len(result)}项'
         else:summary='处理完成'

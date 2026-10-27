@@ -133,6 +133,50 @@ class WebTests(unittest.TestCase):
         self.assertEqual(reopened['rows'][0]['status'],'done')
         self.assertNotIn('token',json.dumps(reopened))
 
+    def test_managed_external_inbox_copy_and_config_scope(self):
+        downloads=self.base/'downloads';downloads.mkdir();p=downloads/'note.txt';p.write_text('course')
+        created=self.job('inbox-add',{'path':str(downloads),'label':'合成下载'})
+        self.assertEqual(created['state'],'done',created)
+        self.assertEqual(len(self.request('inboxes')['sources']),2)
+        rows=self.job('scan')['result']['rows'];external=next(r for r in rows if r.get('external'))
+        plan=self.job('preview',{'ids':[external['id']]})
+        self.assertEqual(plan['state'],'done',plan)
+        self.assertEqual(plan['result']['actions'][0]['operation_type'],'external_copy')
+        copied=self.job('execute',{'plan_id':plan['result']['id']});self.assertEqual(copied['state'],'done',copied)
+        self.assertTrue(p.exists());self.assertTrue((self.root/'01_课程学习/测试课程/note.txt').exists())
+        self.assertEqual(self.job('scan')['result']['already_imported'],1)
+        self.assertEqual(self.job('inbox-add',{'path':str(self.root)})['state'],'error')
+
+    def test_rule_first_ai_fallback_and_supplemented_preview(self):
+        from test_ai import FakeProvider,FakeVault
+        from personalstorage.ai import AIManager
+        provider=FakeProvider();self.server.desktop.credential_vault=FakeVault();self.server.desktop.ai_provider_factory=lambda *a,**k:provider
+        with self.server.desktop.app() as app:AIManager(app,FakeVault()).configure({'enabled':True})
+        self.file('note.txt','course');self.file('unknown.txt','uncertain')
+        result=self.job('scan',{'use_ai':True});self.assertEqual(result['state'],'done',result)
+        self.assertEqual(result['result']['classification']['rule_classified'],1)
+        self.assertEqual(result['result']['classification']['ai_classified'],1);self.assertEqual(provider.calls,1)
+        row=next(r for r in result['result']['rows'] if r['source'].endswith('unknown.txt'))
+        self.assertEqual(row['decision'],'move');self.assertTrue((self.root/row['source']).exists())
+        packet=self.job('ai-prepare',{'ids':[row['id']],'user_context':{row['source']:'这是测试课程的专用资料'}})
+        self.assertEqual(packet['state'],'done',packet);self.assertEqual(packet['result']['items'][0]['user_context'],'这是测试课程的专用资料')
+        self.assertEqual(self.job('ai-run',{'ticket':packet['result']['ticket']})['state'],'done')
+        waiting=next(r for r in self.request('pending') if r['path']==row['source'])
+        preview=self.job('ai-adopt',{'id':waiting['id']});self.assertEqual(preview['state'],'done',preview)
+        self.assertEqual(preview['result']['actions'][0]['target'],'01_课程学习/测试课程/unknown.txt')
+
+    def test_whole_audit_requires_confirmation_and_reuses_cache(self):
+        from test_ai import FakeProvider,FakeVault
+        from personalstorage.ai import AIManager
+        provider=FakeProvider();self.server.desktop.credential_vault=FakeVault();self.server.desktop.ai_provider_factory=lambda *a,**k:provider
+        with self.server.desktop.app() as app:AIManager(app,FakeVault()).configure({'enabled':True})
+        (self.root/'01_课程学习/测试课程/material.txt').write_text('course')
+        self.assertEqual(self.job('library-audit')['state'],'error');self.assertEqual(provider.calls,0)
+        first=self.job('library-audit',{'confirmed':True,'max_batches':2});self.assertEqual(first['state'],'done',first)
+        self.assertEqual(first['result']['approved'],1)
+        second=self.job('library-audit',{'confirmed':True,'max_batches':2});self.assertEqual(second['result']['cache_hits'],1)
+        self.assertEqual(provider.calls,1)
+
     def test_export_import_snapshot_are_downloads(self):
         result=self.job('review-export')['result']
         with urlopen(self.url+result['download']) as r: self.assertEqual(json.load(r)['schema_version'],'1.0')

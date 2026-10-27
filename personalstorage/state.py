@@ -26,6 +26,8 @@ class State:
         CREATE TABLE IF NOT EXISTS observations(item_id TEXT PRIMARY KEY,status TEXT,checked_at TEXT,hash_checked INTEGER);
         CREATE TABLE IF NOT EXISTS ui_tasks(id TEXT PRIMARY KEY,action TEXT,page TEXT,status TEXT,started_at TEXT,finished_at TEXT,phase TEXT,summary TEXT,error TEXT,owner_pid INTEGER,title TEXT);
         CREATE INDEX IF NOT EXISTS ui_tasks_started ON ui_tasks(started_at);
+        CREATE TABLE IF NOT EXISTS inbox_imports(source TEXT PRIMARY KEY,data TEXT);
+        CREATE TABLE IF NOT EXISTS ai_location_cache(path TEXT PRIMARY KEY,fingerprint TEXT,policy_hash TEXT,model TEXT,data TEXT,checked_at TEXT);
         ''')
         identity={'root':str(self.root),'volume':self.root.stat().st_dev,'schema_version':1}
         old=self.get('identity')
@@ -64,8 +66,8 @@ class State:
                 f.write(json.dumps({'operation_id':opid,'status':status,'at':now(),'source':data.get('source'),'target':data.get('target')},ensure_ascii=False)+'\n')
                 f.flush(); os.fsync(f.fileno())
         except OSError as e: self.set('log_export_warning',str(e))
-    def add_review(self,iid,version,assignment,reason,status='pending'):
-        key=digest([iid,version,assignment,reason])
+    def add_review(self,iid,version,assignment,reason,status='pending',context_nonce=None):
+        key=digest([iid,version,assignment,reason]+([context_nonce] if context_nonce else []))
         self.db.execute('INSERT OR IGNORE INTO reviews VALUES(?,?,?,?,?)',(uid(),iid,key,status,json.dumps({'version':version,'assignment':assignment,'reason':reason},ensure_ascii=False)))
     def register(self,op):
         # Metadata and queue registration commit together, after the filesystem move.
@@ -86,7 +88,7 @@ class State:
             prev=self.db.execute('SELECT version FROM assignments WHERE item_id=?',(iid,)).fetchone()
             self.db.execute('INSERT OR REPLACE INTO assignments VALUES(?,?,?)',(iid,prev[0]+1 if prev else 1,json.dumps(assignment,ensure_ascii=False)))
             self.db.execute("UPDATE reviews SET status='superseded' WHERE item_id=? AND status<>'confirmed'",(iid,))
-            self.add_review(iid,digest(op['manifest']),assignment,'classification_unresolved' if op.get('decision')=='review' else 'new_assignment','waiting_user' if op.get('decision')=='review' else 'pending')
+            self.add_review(iid,digest(op['manifest']),assignment,'classification_unresolved' if op.get('decision')=='review' else 'new_assignment','waiting_user' if op.get('decision')=='review' else 'confirmed' if op.get('classification_verified') else 'pending')
             self.db.execute('INSERT OR REPLACE INTO operations VALUES(?,?,?,?,?)',(op['id'],op['run_id'],'committed',json.dumps(op,ensure_ascii=False),now()))
             self.event(op['id'],'committed',{'source':op['source'],'target':op['target']})
         self.mirror_event(op['id'],'committed',op)
