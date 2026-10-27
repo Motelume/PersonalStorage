@@ -58,6 +58,16 @@ class BetaTests(unittest.TestCase):
         searching.build(self.app)
         with patch('urllib.request.urlopen',side_effect=AssertionError('no network')):result=searching.search(self.app,'feedback control',True)
         self.assertEqual(result['mode'],'semantic_lsa');self.assertTrue(result['rows']);self.assertNotIn('poetry',result['rows'][0]['path'])
+    def test_accepted_recognition_is_content_bound_and_preserves_originals(self):
+        import os
+        from personalstorage import recognition
+        from personalstorage.extraction import extract
+        p=self.file('00_收件箱/scan.dat','opaque-source')
+        with patch.dict(os.environ,{'PERSONALSTORAGE_HOME':str(self.base/'machine')}):
+            before=p.read_bytes();recognition.accept(p,{'text':'verified course text','source':'local_audio','complete':False})
+            self.assertEqual(extract(p)['text'],'verified course text');p.rename(p.with_name('renamed.dat'));p=p.with_name('renamed.dat')
+            self.assertEqual(extract(p)['name'],'renamed.dat');self.assertEqual(p.read_bytes(),before)
+            p.write_text('other--source',encoding='utf-8');self.assertFalse(extract(p).get('recognition_accepted',False))
     def test_index_cancellation_keeps_originals(self):
         p=self.file('00_收件箱/x.txt','course');event=threading.Event();event.set()
         with scope(event),self.assertRaises(Cancelled):searching.build(self.app)

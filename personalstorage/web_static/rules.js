@@ -73,9 +73,11 @@ async function rmSave(){
  RM.status.draft=result.draft;if(S.page==='settings')render();
 }
 async function rmTarget(kind){
- const stack=[];let current=null;
+ const stack=[];let current=null,sequence=0;const pickerToken=rmID();view('settings').pickerToken=pickerToken;
  async function draw(id){
+  const request=++sequence;modal('选择规则目标目录','<p>正在读取目录…</p><button data-action="close-modal">取消</button>','settings');
   const data=await api('directories?archived='+(kind==='task')+(id?'&id='+encodeURIComponent(id):''));current=id?{id,path:data.path}:null;
+  if(request!==sequence||view('settings').pickerToken!==pickerToken)return;
   modal('选择规则目标目录',`<p>仅绑定现有目录，不创建或移动文件。</p><div class="toolbar"><button id="rm-dir-back" ${stack.length?'':'disabled'}>← 上一级</button><span class="pick-path">${esc(data.path||'资料分类')}</span></div><div class="directory-list">${data.items.map(x=>`<button data-rm-dir="${x.id}">▱ ${esc(x.name)}</button>`).join('')}</div><div class="modal-actions"><button data-action="close-modal">取消</button><button id="rm-dir-use" class="primary" ${current?'':'disabled'}>绑定此目录</button></div>`,'settings');
   if(S.page!=='settings')return;
   $('#rm-dir-back').onclick=()=>draw(stack.pop()).catch(handleError);
@@ -85,9 +87,11 @@ async function rmTarget(kind){
  await draw();
 }
 async function rmPickSamples(onDone=null){
- const stack=[];let selected=new Map(RM.samples.map(x=>[x.path,x]));
+ const stack=[];let selected=new Map(RM.samples.map(x=>[x.path,x]));let sequence=0;const pickerToken=rmID();view('settings').pickerToken=pickerToken;
  async function draw(id,offset=0){
+  const request=++sequence;modal('选择试跑样本','<p>正在读取样本目录…</p><button data-action="close-modal">取消</button>','settings');
   const data=await api('rules-samples?offset='+offset+(id?'&id='+encodeURIComponent(id):''));
+  if(request!==sequence||view('settings').pickerToken!==pickerToken)return;
   modal('选择试跑样本',`<p>最多10个，文件夹按完整资料包测试。已选 <span id="rm-picked-count">${selected.size}</span> 个。</p><div class="toolbar"><button id="rm-sample-back" ${stack.length?'':'disabled'}>← 上一级</button><span class="pick-path">${esc(data.path||'资料库和已登记收件箱')}</span></div><div class="rm-browser">${data.items.map(x=>`<div class="rm-browser-row">${x.sampleable?`<input type="checkbox" data-rm-sample="${x.id}" aria-label="选择样本 ${esc(x.name)}" ${selected.has(x.path)?'checked':''}>`:'<span></span>'}${x.kind==='directory'?`<button data-rm-folder="${x.id}">▱ ${esc(x.name)} ›</button>`:`<span>${esc(x.name)}</span>`}</div>`).join('')||'<p>没有可选项目。</p>'}</div>${data.limited?'<p class="hint">仅显示当前目录前2000项，请进入更具体的目录。</p>':''}<div class="toolbar">${offset?'<button id="rm-sample-prev">上一页</button>':''}${data.next_offset!==null?'<button id="rm-sample-next">下一页</button>':''}</div><div class="modal-actions"><button data-action="close-modal">取消</button><button id="rm-sample-use" class="primary">使用已选样本</button></div>`,'settings');
   if(S.page!=='settings')return;
   $('#rm-sample-back').onclick=()=>{const p=stack.pop();draw(p.id,p.offset).catch(handleError);};
@@ -169,3 +173,6 @@ function rmEditEvent(e){
 document.addEventListener('input',e=>{if(!e.target.matches('select,input[type=checkbox]'))rmEditEvent(e);});
 document.addEventListener('change',e=>{if(e.target.matches('select,input[type=checkbox]'))rmEditEvent(e);});
 window.addEventListener('beforeunload',e=>{if(RM.dirty){e.preventDefault();e.returnValue='';}});
+
+const rmBaseCloseModal=closeModal;closeModal=function(page=S.page){view(page).pickerToken=null;return rmBaseCloseModal(page);};
+$('#modal').addEventListener('cancel',()=>view(S.page).pickerToken=null);

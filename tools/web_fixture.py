@@ -40,6 +40,10 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
             if action=='rules-simulate':time.sleep(1)
             return original_perform(app,action,body,job)
         server.desktop.perform=delayed_rules
+        original_directory=server.desktop.directory
+        def delayed_directory(*args,**kwargs):
+            time.sleep(.2);return original_directory(*args,**kwargs)
+        server.desktop.directory=delayed_directory
     if '--ocr-fixture' in sys.argv:
         from test_ocr import sample_image,native_pdf
         from PIL import Image

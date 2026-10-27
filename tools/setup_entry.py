@@ -49,7 +49,12 @@ def safe(base,relative):
     return target
 
 def atomic_json(path,value):
-    temp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path)
+    temp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp');temp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
+    try:temp.replace(path)
+    except OSError as exc:
+        if getattr(exc,'winerror',None)!=17:raise
+        with temp.open('rb') as source,path.open('wb' if path.exists() else 'xb') as target:shutil.copyfileobj(source,target);target.flush();os.fsync(target.fileno())
+        temp.unlink()
 
 def backup_state():
     root=data_root();state_home=local_home()/'PersonalStorage'
@@ -86,7 +91,10 @@ def install(base,payload,manifest,register=True,desktop=False):
     base.mkdir(parents=True,exist_ok=True);target=base/version
     if target.exists():
         marker=target/'.installed-files.json'
-        if marker.is_file() and json.loads(marker.read_text())['payload_sha256']==meta['payload_sha256']:return {'already_installed':True,'path':str(target)}
+        if marker.is_file():
+            ready=json.loads(marker.read_text(encoding='utf-8'))
+            if ready.get('payload_sha256')==meta['payload_sha256'] and all(safe(target,r['path']).is_file() and file_hash(safe(target,r['path']))==r['sha256'] for r in ready['files']):
+                return {**finish_install(base,target,version,backup_state() if register else None,register,desktop),'already_installed':True}
         raise ValueError('该版本位置已存在，保留原位置；请先核对或选择其他安装目录')
     stage=base/('.partial-'+uuid.uuid4().hex);stage.mkdir();files=[]
     with zipfile.ZipFile(payload) as archive:
@@ -104,8 +112,31 @@ def install(base,payload,manifest,register=True,desktop=False):
     atomic_json(stage/'.installed-files.json',{'magic':MAGIC,'version':version,'files':files,'payload_sha256':meta['payload_sha256']})
     # Both resolved paths are checked before moving the generated program staging directory.
     if not stage.resolve().is_relative_to(base.resolve()) or not target.resolve().is_relative_to(base.resolve()):raise ValueError('安装暂存越界')
-    stage.rename(target)
-    statefile=base/'installation.json';state=json.loads(statefile.read_text(encoding='utf-8')) if statefile.is_file() else {'magic':MAGIC,'versions':[],'shortcuts':[]}
+    try:stage.rename(target)
+    except OSError as exc:
+        if getattr(exc,'winerror',None)!=17:raise
+        # Redirected user folders may have distinct backing volumes. Copy only generated
+        # program files into a new version directory, then verify before publishing any entry.
+        shutil.copytree(stage,target,dirs_exist_ok=False)
+        if any(file_hash(safe(target,row['path']))!=row['sha256'] for row in files):raise ValueError('安装副本校验失败，旧版本与入口保持原状')
+    return finish_install(base,target,version,backup,register,desktop)
+
+def install_state(base):
+    dbfile=base/'personalstorage-install.sqlite3'
+    if dbfile.is_file():
+        with closing(sqlite3.connect(dbfile)) as db:
+            row=db.execute('SELECT value FROM installation WHERE id=1').fetchone()
+        if row:return json.loads(row[0])
+    statefile=base/'installation.json'
+    return json.loads(statefile.read_text(encoding='utf-8')) if statefile.is_file() else {'magic':MAGIC,'versions':[],'shortcuts':[]}
+
+def save_install_state(base,state):
+    with closing(sqlite3.connect(base/'personalstorage-install.sqlite3')) as db:
+        db.execute('CREATE TABLE IF NOT EXISTS installation(id INTEGER PRIMARY KEY,value TEXT)');db.execute('INSERT OR REPLACE INTO installation VALUES(1,?)',(json.dumps(state,ensure_ascii=False),));db.commit()
+    atomic_json(base/'installation.json',state)
+
+def finish_install(base,target,version,backup,register,desktop):
+    state=install_state(base)
     if state.get('magic')!=MAGIC:raise ValueError('安装元数据已被其他内容占用')
     state['active']=version;state['versions']=list(dict.fromkeys(state['versions']+[version]));state['last_backup']=backup
     if register:
@@ -114,10 +145,10 @@ def install(base,payload,manifest,register=True,desktop=False):
         bundled=Path(getattr(sys,'_MEIPASS',Path(__file__).parent))/'PersonalStorage-Uninstall.exe'
         if bundled.is_file():shutil.copy2(bundled,maintenance/'PersonalStorage-Uninstall.exe')
         registry(base,version)
-    atomic_json(statefile,state);return {'installed':True,'version':version,'path':str(target),'backup':backup,'data_preserved':True}
+    save_install_state(base,state);return {'installed':True,'version':version,'path':str(target),'backup':backup,'data_preserved':True}
 
 def uninstall(base,register=True):
-    base=validate_base(base);statefile=base/'installation.json';state=json.loads(statefile.read_text(encoding='utf-8'))
+    base=validate_base(base);statefile=base/'installation.json';state=install_state(base)
     if state.get('magic')!=MAGIC:raise ValueError('缺少有效安装清单，拒绝删除')
     if os.name=='nt':
         import ctypes
@@ -152,7 +183,10 @@ def uninstall(base,register=True):
         import winreg
         try:winreg.DeleteKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Uninstall\PersonalStorage')
         except FileNotFoundError:pass
-    statefile.unlink();return {'uninstalled':True,'removed_files':len(removed),'modified_program_files_preserved':preserved,'user_data_preserved':True,'notice':'资料、规则、索引、密钥和备份均保留；旧便携版本及卸载工具可自行保留。'}
+    if statefile.exists():statefile.unlink()
+    dbfile=base/'personalstorage-install.sqlite3'
+    if dbfile.exists():dbfile.unlink()
+    return {'uninstalled':True,'removed_files':len(removed),'modified_program_files_preserved':preserved,'user_data_preserved':True,'notice':'资料、规则、索引、密钥和备份均保留；旧便携版本及卸载工具可自行保留。'}
 
 def webview_ready():
     import winreg
