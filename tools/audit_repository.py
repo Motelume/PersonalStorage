@@ -24,7 +24,7 @@ def allowed(name):
                 'personalstorage/web_static/app.css','personalstorage/web_static/ai.js','personalstorage/web_static/management.js','personalstorage/web_static/overview.js','personalstorage/web_static/overview.css','personalstorage/web_static/ocr.js','personalstorage/web_static/rules.js','personalstorage/web_static/rules.css','personalstorage/web_static/workbench.js','personalstorage/web_static/workbench.css', 'personalstorage/templates/AGENTS.md',
                 'personalstorage/templates/classification.md','personalstorage/templates/local-rules.md', 'personalstorage/templates/classification-config.json',
                 'schemas/review-result.schema.json', 'docs/architecture.md','docs/ai-guide.md','docs/desktop-guide.md','docs/portability.md','docs/workspace-guide.md','docs/overview-guide.md','docs/ocr-guide.md','docs/rule-management-guide.md','docs/beta-guide.md','docs/beta-release-notes.md',
-                '.github/workflows/tests.yml','.github/workflows/prerelease.yml', 'tools/audit_repository.py',
+                'docs/roadmap.md','.github/workflows/tests.yml','.github/workflows/prerelease.yml', 'tools/audit_repository.py',
                 'tools/frontend_smoke.cjs','tools/frontend_ai_smoke.cjs','tools/frontend_workspace_smoke.cjs','tools/frontend_intelligent_smoke.cjs','tools/frontend_overview_smoke.cjs','tools/frontend_ocr_smoke.cjs','tools/frontend_rules_smoke.cjs','tools/frontend_beta_smoke.cjs','tools/build_release.py','tools/release_acceptance.py','tools/release_gate.py','tools/setup_entry.py','tools/sign_release.ps1','tools/evaluate_quality.py', 'tools/web_fixture.py','tools/desktop_entry.py','tools/build_desktop.py'): return True
     return False
 
