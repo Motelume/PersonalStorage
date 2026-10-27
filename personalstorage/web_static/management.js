@@ -8,15 +8,17 @@ refreshPage=async function(page=S.page){
  }
  return managementRefresh(page);
 };
+function importModeOptions(value='copy'){return `<option value="copy" ${value==='copy'?'selected':''}>复制归档，保留原件</option><option value="move" ${value==='move'?'selected':''}>转移归档，成功后删除原件</option>`;}
 function renderInboxes(){
  const data=view('inboxes').sources;
  $('#content').classList.remove('list-page');
  if(!data){$('#content').innerHTML=empty('正在读取收件箱配置','');return;}
- $('#content').innerHTML=`<div class="settings-grid"><div><div class="panel settings-card"><h2>已登记的收件箱</h2><p>只扫描已启用目录的直接内容，子文件夹作为完整资料包保留。不会默认读取整个下载区或微信聊天目录。</p>${data.sources.map(s=>`<div class="inbox-source"><div><strong>${esc(s.label)}</strong> <span class="badge ${s.enabled?'green':''}">${s.enabled?'已启用':'已停用'}</span><span class="sub">${esc(s.path)}</span>${!s.available?`<p class="hint">${esc(s.error||'目录不可用')}</p>`:''}</div><div class="toolbar"><button data-source-open="${esc(s.id)}" ${s.available?'':'disabled'}>打开目录</button><button data-source-toggle="${esc(s.id)}" data-enabled="${s.enabled?'false':'true'}">${s.enabled?'停用':'启用'}</button>${!s.internal?`<button class="danger" data-source-remove="${esc(s.id)}">移除来源</button>`:''}</div></div>`).join('')}</div></div><div><div class="panel settings-card"><h2>添加外部收件箱</h2><div class="field"><label for="inbox-label">显示名称</label><input id="inbox-label" class="full-width" type="text" maxlength="80" placeholder="例如：系统下载、微信接收文件"></div><div class="field"><label for="inbox-path">文件夹绝对路径</label><input id="inbox-path" class="full-width" type="text" placeholder="粘贴资源管理器地址栏中的完整路径"></div><div class="toolbar">${S.boot.ui_mode==='desktop'?'<button id="pick-inbox">选择文件夹…</button>':''}${data.suggested_downloads?'<button id="fill-downloads">填写下载目录</button>':''}<button class="primary" data-action="inbox-add">添加收件箱</button></div><p class="hint">微信目录可在微信设置中找到后粘贴；月度目录可单独添加。来源之间不得嵌套，也不能包含程序、资料库或系统目录。</p></div><div class="panel settings-card"><h2>归档方式：校验复制，保留原件</h2><p>外部来源会先生成预览；你执行后才复制到资料库，保留原名、内容及资料包结构。复制完成验证后记录已导入标记。</p><p class="hint">后续扫描跳过未变化且库内副本仍存在的已导入项。同名冲突保持原位，不覆盖或自动改名。停用来源不删除文件。</p></div></div></div>`;
+ $('#content').innerHTML=`<div class="settings-grid"><div><div class="panel settings-card"><h2>已登记的收件箱</h2><p>只扫描已启用目录的直接内容，子文件夹作为完整资料包保留。不会默认读取整个下载区或微信聊天目录。</p>${data.sources.map(s=>`<div class="inbox-source"><div><strong>${esc(s.label)}</strong> <span class="badge ${s.enabled?'green':''}">${s.enabled?'已启用':'已停用'}</span><span class="sub">${esc(s.path)}</span>${!s.available?`<p class="hint">${esc(s.error||'目录不可用')}</p>`:''}</div><div class="toolbar"><button data-source-open="${esc(s.id)}" ${s.available?'':'disabled'}>打开目录</button><button data-source-toggle="${esc(s.id)}" data-enabled="${s.enabled?'false':'true'}">${s.enabled?'停用':'启用'}</button>${!s.internal?`<label>归档方式 <select data-source-mode="${esc(s.id)}" aria-label="${esc(s.label)}的归档方式">${importModeOptions(s.import_mode)}</select></label><button data-source-save="${esc(s.id)}">保存方式</button><button class="danger" data-source-remove="${esc(s.id)}">移除来源</button>`:''}</div></div>`).join('')}</div></div><div><div class="panel settings-card"><h2>添加外部收件箱</h2><div class="field"><label for="inbox-label">显示名称</label><input id="inbox-label" class="full-width" type="text" maxlength="80" placeholder="例如：系统下载、微信接收文件"></div><div class="field"><label for="inbox-path">文件夹绝对路径</label><input id="inbox-path" class="full-width" type="text" placeholder="粘贴资源管理器地址栏中的完整路径"></div><div class="field"><label for="inbox-mode">归档方式</label><select id="inbox-mode" class="full-width">${importModeOptions()}</select></div><div class="toolbar">${S.boot.ui_mode==='desktop'?'<button id="pick-inbox">选择文件夹…</button>':''}${data.suggested_downloads?'<button id="fill-downloads">填写下载目录</button>':''}<button class="primary" data-action="inbox-add">添加收件箱</button></div><p class="hint">微信目录可在微信设置中找到后粘贴；月度目录可单独添加。来源之间不得嵌套，也不能包含程序、资料库或系统目录。</p></div><div class="panel settings-card"><h2>两种归档方式</h2><p>复制归档：完整校验副本后保留原件，后续跳过未变化的已导入项。</p><p>转移归档：先复制并完整校验，再逐个核对、删除原件；仅删除此次预览中的文件，最后移除空目录。遇到占用、变化或中断，保留副本并提示核对，可在操作记录中重试清理。</p><p>每个外部收件箱分别保存归档方式。更改设置不会立即处理文件；执行前会再次显示方式。库内收件箱继续按原有移动流程处理。</p><p class="hint">后续扫描跳过未变化且库内副本仍存在的已导入项。同名冲突保持原位，不覆盖或自动改名。停用来源不删除文件。</p></div></div></div>`;
  $('#pick-inbox')?.addEventListener('click',async()=>{try{const picked=await api('inbox-pick',{});if(S.page==='inboxes'&&picked.path)$('#inbox-path').value=picked.path;}catch(error){handleError(error);}});
  $('#fill-downloads')?.addEventListener('click',()=>{$('#inbox-path').value=data.suggested_downloads;if(!$('#inbox-label').value)$('#inbox-label').value='系统下载';});
  document.querySelectorAll('[data-source-open]').forEach(b=>b.onclick=()=>api('open',b.dataset.sourceOpen==='internal'?{root:'inbox'}:{inbox_id:b.dataset.sourceOpen}).catch(handleError));
  document.querySelectorAll('[data-source-remove]').forEach(b=>b.onclick=()=>{view('inboxes').removingSourceId=b.dataset.sourceRemove;modal('移除收件箱来源','<p>仅停止扫描此来源并关闭该来源的未完成待办。原文件、已归档副本与历史记录都保留。</p><div class="modal-actions"><button data-action="close-modal">返回</button><button class="danger" data-action="inbox-remove">确认移除来源</button></div>','inboxes');});
+ document.querySelectorAll('[data-source-save]').forEach(b=>b.onclick=async()=>{try{if(view('inboxes').job)return;const import_mode=document.querySelector(`[data-source-mode="${b.dataset.sourceSave}"]`).value;await job('inbox-mode',{id:b.dataset.sourceSave,import_mode},'inboxes');view('inbox').needsScan=true;await settled('inboxes','归档方式已保存，旧预览已失效；文件尚未处理。');}catch(error){note(error.message,true,'inboxes');}});
  document.querySelectorAll('[data-source-toggle]').forEach(b=>b.onclick=async()=>{try{if(view('inboxes').job)return;await job('inbox-toggle',{id:b.dataset.sourceToggle,enabled:b.dataset.enabled==='true'},'inboxes');view('inbox').needsScan=true;await settled('inboxes','收件箱配置已更新，没有移动或删除文件。');}catch(error){note(error.message,true,'inboxes');}});
 }
 function auditPanel(){
@@ -43,7 +45,9 @@ render=function(){
 };
 const managementDetail=renderDetail;
 renderDetail=function(){
- managementDetail();const r=S.focus;if(!r||r.kind==='task'||r.data||r.available===false||r.status==='resolved_external')return;
+ managementDetail();const r=S.focus;
+ if(r?.data?.operation_type?.startsWith('external_')){const area=$('#detail .detail-actions');area?.insertAdjacentHTML('beforebegin',`<div class="field"><label>归档方式与原件状态</label><p>${archiveModeSummary(r.data)}</p>${r.status==='source_retained'?`<p class="hint">原件尚未完全清理：${esc(r.data.error||'请核对后重试')}。副本已经校验并保留。</p>`:''}</div>`);if(r.status==='source_retained')area?.insertAdjacentHTML('beforeend','<button data-action="cleanup-preview">重新检查并清理原件…</button>');}
+if(!r||r.kind==='task'||r.data||r.available===false||r.status==='resolved_external')return;
  const actionArea=$('#detail .detail-actions');if(!actionArea)return;
  const path=r.path||r.source;const notes=view().notes||(view().notes={});
  actionArea.insertAdjacentHTML('beforebegin',`<div class="field purpose-field"><label for="file-purpose">补充这份资料的性质或用途</label><textarea id="file-purpose" maxlength="2000" placeholder="例如：这是某项目的专用学习材料；这是他人的保研经验分享。">${esc(notes[path]??r.user_context??'')}</textarea>${r.details?.assignment?.manual_locked?'<label class="scope"><input id="override-locked" type="checkbox">本次说明用于重新判断此前人工归属</label>':''}<button class="primary" data-action="ai-refine">补充说明并让AI分类</button><p class="hint">将结合文件内容、补充说明和现有目录判断，不必逐层选择文件夹。归属确定后仍须确认归档计划。</p></div>`);
@@ -52,14 +56,16 @@ renderDetail=function(){
 const managementPerform=perform;
 perform=async function(action,page=S.page){
  const v=view(page),focus=v.focus;
+ if(action==='cleanup-preview'){const r=await job('cleanup-preview',{id:focus.id},page);v.cleanupTicket=r.ticket;modal('清理已归档原件 · 确认',`<p>已重新校验库内副本。确认后将删除以下源位置中仍与归档记录一致的 ${r.file_count} 个文件，并移除空目录。</p><div class="preview-item">原位置：${esc(r.source_absolute)}<br>已验证副本：${esc(r.target)}</div><p class="hint">源或副本发生变化时停止清理。不会重新复制或覆盖副本。</p><div class="modal-actions"><button data-action="close-modal">返回</button><button class="danger" data-action="cleanup-execute">确认清理原件</button></div>`,page);return;}
+ if(action==='cleanup-execute'){const ticket=v.cleanupTicket;v.cleanupTicket=null;closeModal(page);const r=await job('cleanup-execute',{ticket},page);await settled(page,r.status==='committed'?'原件已清理，已校验的归档副本保留。':'副本保留，原件未完全清理：'+r.error,r.status!=='committed');return;}
  if(action==='manage-inboxes'){await load('inboxes');return;}
  if(action==='inbox-remove'){
   const id=v.removingSourceId;closeModal(page);await job('inbox-remove',{id},page);view('inbox').needsScan=true;
   await settled(page,'来源已移除，文件与归档副本均保留；该来源未完成待办已停止追踪。');return;
  }
  if(action==='inbox-add'){
-  const path=$('#inbox-path').value.trim(),label=$('#inbox-label').value.trim();
-  await job('inbox-add',{path,label},page);view('inbox').needsScan=true;await settled(page,'收件箱已添加。下次扫描会包含此来源，文件不会立即移动。');return;
+  const path=$('#inbox-path').value.trim(),label=$('#inbox-label').value.trim(),import_mode=$('#inbox-mode').value;
+  await job('inbox-add',{path,label,import_mode},page);view('inbox').needsScan=true;await settled(page,'收件箱已添加。下次扫描会包含此来源，文件不会立即移动。');return;
  }
  if(action==='scan'){await scan({use_ai:S.boot.model_enabled});return;}
  if(action==='ai-refine'){
@@ -73,7 +79,7 @@ perform=async function(action,page=S.page){
   const row=pending.find(item=>item.path===source);
   if(row?.details?.result?.decision==='suggest_reclassify'){
    v.focus=row;const plan=await job('ai-adopt',{id:row.id},page);v.preview=plan;
-   modal('AI已结合补充信息确定归属 · 归档预览',`<p>请核对AI建议的实际目标。外部来源校验复制并保留原件；库内资料执行移动。</p>${plan.actions.map(a=>`<div class="preview-item"><strong>${esc(filename(a.source))}</strong><div class="path">${esc(a.source)}</div><div class="arrow">↓</div>${esc(a.target)}<p class="hint">${esc(a.evidence)}</p></div>`).join('')}<div class="modal-actions"><button data-action="close-modal">返回</button><button class="primary" data-action="execute">执行这 ${plan.actions.length} 项</button></div>`,page);
+   modal('AI已结合补充信息确定归属 · 归档预览',`<p>请核对AI建议的实际目标。请逐项核对归档方式；转移模式会在副本校验后删除原件。</p>${plan.actions.map(a=>`<div class="preview-item"><strong>${esc(filename(a.source))}</strong><div class="path">${esc(a.source)}</div><div class="arrow">↓</div>${esc(a.target)}<p class="hint">${archiveModeSummary(a)}</p><p class="hint">${esc(a.evidence)}</p></div>`).join('')}<div class="modal-actions"><button data-action="close-modal">返回</button><button class="primary" data-action="execute">${executeLabel(plan)}</button></div>`,page);
   }else if(result.results.every(item=>item.status==='confirmed')){await settled(page,'AI已结合补充说明确认当前位置合理，此项已完成。');}
   else{await settled(page,'AI仍需更多信息，请查看判断依据并继续补充说明。');}
   return;

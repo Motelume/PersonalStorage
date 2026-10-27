@@ -61,6 +61,22 @@ class WebTests(unittest.TestCase):
         self.assertFalse(b['status']['watching']);self.assertFalse(b['authorization_current'])
         self.assertEqual(Path(b['status']['profile']), self.base/'profile')
 
+    def test_external_modes_persist_and_execute_with_stale_preview_protection(self):
+        downloads=self.base/'external';downloads.mkdir();source=downloads/'note.txt';source.write_text('course')
+        created=self.job('inbox-add',{'path':str(downloads),'import_mode':'move'})['result']
+        self.assertEqual(self.request('inboxes')['sources'][-1]['import_mode'],'move')
+        scan=self.job('scan')['result'];row=next(r for r in scan['rows'] if r.get('external'))
+        plan=self.job('preview',{'ids':[row['id']]})['result']
+        self.assertEqual(plan['actions'][0]['operation_type'],'external_move')
+        self.assertFalse(plan['actions'][0]['source_retained'])
+        self.job('inbox-mode',{'id':created['id'],'import_mode':'copy'})
+        result=self.job('execute',{'plan_id':plan['id']})['result']
+        self.assertEqual(result['results'][0]['status'],'failed');self.assertTrue(source.exists())
+        self.job('inbox-mode',{'id':created['id'],'import_mode':'move'})
+        scan=self.job('scan')['result'];row=next(r for r in scan['rows'] if r.get('external'))
+        plan=self.job('preview',{'ids':[row['id']]})['result'];result=self.job('execute',{'plan_id':plan['id']})['result']
+        self.assertEqual(result['results'][0]['status'],'committed');self.assertFalse(source.exists())
+
     def test_origin_token_host_and_object_scope(self):
         for headers in [{'Origin':'https://evil.example'},{'X-Storage-Token':'wrong'},{'Host':'evil.example'}]:
             with self.assertRaises(HTTPError): self.request('scan',{},headers)

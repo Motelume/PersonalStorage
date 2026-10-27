@@ -60,7 +60,7 @@ perform=async function(action,page=S.page){
  }
  if(action==='ai-adopt'){
   const p=await job('ai-adopt',{id:focus.id},page);v.preview=p;
-  modal('采用AI建议 · 移动计划',`<p>你正在人工采用本次AI建议，请核对实际目标。</p>${p.actions.map(a=>`<div class="preview-item"><strong>${esc(filename(a.source))}</strong><div class="path">${esc(a.source)}</div><div class="arrow">↓</div>${esc(a.target)}<p class="hint">${esc(a.evidence)}</p></div>`).join('')}<div class="modal-actions"><button data-action="close-modal">返回</button><button class="primary" data-action="execute">执行这 ${p.actions.length} 项</button></div>`,page);return;
+  modal('采用AI建议 · 移动计划',`<p>你正在人工采用本次AI建议，请核对实际目标。</p>${p.actions.map(a=>`<div class="preview-item"><strong>${esc(filename(a.source))}</strong><div class="path">${esc(a.source)}</div><div class="arrow">↓</div>${esc(a.target)}<p class="hint">${archiveModeSummary(a)}</p><p class="hint">${esc(a.evidence)}</p></div>`).join('')}<div class="modal-actions"><button data-action="close-modal">返回</button><button class="primary" data-action="execute">${executeLabel(p)}</button></div>`,page);return;
  }
  return originalPerform(action,page);
 };

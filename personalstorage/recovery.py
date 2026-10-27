@@ -9,9 +9,19 @@ def recover(root,state,policy):
         for row in rows:
             op=json.loads(row['data'])
             try:
-                if op.get('operation_type')=='external_copy':
+                if op.get('operation_type') in ('external_copy','external_move'):
+                    from types import SimpleNamespace
+                    from . import inboxes,importing
                     dst=safe_path(root,op['target'])
-                    if dst.exists() and manifest(dst)==op['manifest']:state.register(op);status='committed'
+                    if dst.exists() and manifest(dst)==op['manifest']:
+                        # Recovery reconciles only: source deletion always needs
+                        # a fresh, explicit cleanup preview and confirmation.
+                        retained=True
+                        if op['operation_type']=='external_move':
+                            try:retained=inboxes.resolve(root,state,op['source'],enabled=False).exists()
+                            except (OSError,SafetyError):retained=True
+                        result=importing.finalize(SimpleNamespace(root=root,state=state),op,retained,'操作中断，原件状态需核对' if retained and op['operation_type']=='external_move' else None)
+                        status=result['status']
                     elif not dst.exists():state.op(op['id'],'failed',{**op,'error':'归档副本未发布，外部原件保留'});status='source_retained'
                     else:state.op(op['id'],'recovery_required',{**op,'error':'副本状态需核对；不会删除外部原件'});status='manual_required'
                     out.append({'operation_id':op['id'],'status':status});continue

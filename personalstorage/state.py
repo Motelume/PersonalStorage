@@ -89,9 +89,10 @@ class State:
             self.db.execute('INSERT OR REPLACE INTO assignments VALUES(?,?,?)',(iid,prev[0]+1 if prev else 1,json.dumps(assignment,ensure_ascii=False)))
             self.db.execute("UPDATE reviews SET status='superseded' WHERE item_id=? AND status<>'confirmed'",(iid,))
             self.add_review(iid,digest(op['manifest']),assignment,'classification_unresolved' if op.get('decision')=='review' else 'new_assignment','waiting_user' if op.get('decision')=='review' else 'confirmed' if op.get('classification_verified') else 'pending')
-            self.db.execute('INSERT OR REPLACE INTO operations VALUES(?,?,?,?,?)',(op['id'],op['run_id'],'committed',json.dumps(op,ensure_ascii=False),now()))
-            self.event(op['id'],'committed',{'source':op['source'],'target':op['target']})
-        self.mirror_event(op['id'],'committed',op)
+            completion=op.get('completion_status','committed')
+            self.db.execute('INSERT OR REPLACE INTO operations VALUES(?,?,?,?,?)',(op['id'],op['run_id'],completion,json.dumps(op,ensure_ascii=False),now()))
+            self.event(op['id'],completion,{'source':op['source'],'target':op['target']})
+        self.mirror_event(op['id'],completion,op)
     def snapshot(self,target):
         target=Path(target)
         if target.exists(): raise SafetyError('快照目标已存在')

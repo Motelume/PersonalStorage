@@ -105,6 +105,14 @@ def main(argv=None):
             else:raise SafetyError('桌面页面未完成加载')
             data=window.evaluate_js('({version:S.boot.app_version,root:S.boot.status.root,mode:S.boot.ui_mode,pages:document.querySelectorAll("nav button").length,model_enabled:S.boot.model_enabled})')
             if data['mode']!='desktop' or data['pages']!=6:raise SafetyError('桌面界面状态不正确')
+            window.evaluate_js('load("inboxes");true')
+            for _ in range(100):
+                if window.evaluate_js('document.getElementById("inbox-mode") !== null'):break
+                time.sleep(.1)
+            else:raise SafetyError('收件箱管理页面未显示')
+            modes=window.evaluate_js('Array.from(document.getElementById("inbox-mode").options).map(o=>o.value)')
+            if modes!=['copy','move']:raise SafetyError('收件箱两种归档方式未显示')
+            result['inbox_modes']=modes
             window.evaluate_js('load("ai");true')
             for _ in range(100):
                 if window.evaluate_js('document.getElementById("ai-key") !== null'):break

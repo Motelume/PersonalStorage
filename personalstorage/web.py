@@ -182,9 +182,19 @@ class Desktop:
             {k: v for k, v in a.items() if k != 'manifest'} for a in plan['actions']]}
 
     def perform(self, app, action, b, job):
-        if action=='inbox-add':return inboxes.add(app.root,app.state,b.get('path'),b.get('label',''))
+        if action=='inbox-add':return inboxes.add(app.root,app.state,b.get('path'),b.get('label',''),b.get('import_mode','copy'))
+        if action=='inbox-mode':return inboxes.set_mode(app.state,b.get('id'),b.get('import_mode'))
         if action=='inbox-toggle':return inboxes.toggle(app.state,b.get('id'),b.get('enabled'))
         if action=='inbox-remove':return inboxes.remove(app.state,b.get('id'))
+        if action=='cleanup-preview':
+            ticket=importing.cleanup_preview(app,self.get(b['id']).get('operation_id'))
+            ident=uid();self.previews[ident]={'cleanup':ticket,'time':time.monotonic(),'used':False}
+            return {'ticket':ident,**{k:ticket[k] for k in ('source_absolute','target','file_count')}}
+        if action=='cleanup-execute':
+            ticket=self.previews.get(b.get('ticket'))
+            if not ticket or not ticket.get('cleanup') or ticket['used'] or time.monotonic()-ticket['time']>900:raise SafetyError('清理预览已失效，请重新核对')
+            ticket['used']=True
+            return importing.cleanup_execute(app,ticket['cleanup'])
         if action=='library-audit':
             if b.get('confirmed') is not True:raise SafetyError('请通过全库复核按钮确认范围与批次上限后启动')
             manager=AIManager(app,vault=self.credential_vault,provider_factory=self.ai_provider_factory)
@@ -318,8 +328,9 @@ class Desktop:
                     if digest(json.loads(row[0]) if row else {})!=obj['assignment_fingerprint']:raise SafetyError('归属已变化，请刷新待办')
             preview['used']=True;results=[]
             for part in preview.get('parts',[plan]):
-                job.update(phase='校验复制，保留外部原件' if part.get('type')=='external_copy' else '移动并核验',run_id=part['id'],total=len(part['actions']))
-                result=importing.execute(app,part) if part.get('type')=='external_copy' else app.execute(part['id'])
+                external=part.get('type') in ('external_copy','external_import')
+                job.update(phase='按来源设置归档并核验' if external else '移动并核验',run_id=part['id'],total=len(part['actions']))
+                result=importing.execute(app,part) if external else app.execute(part['id'])
                 results.extend(result['results'])
                 for action,row in zip(part['actions'],result['results']):
                     if row['status']=='committed' and action.get('ai_classified'):
@@ -353,7 +364,7 @@ class Desktop:
             row = app.state.db.execute("SELECT data FROM operations WHERE id=? AND status='committed'", (obj.get('operation_id'),)).fetchone()
             if not row: raise SafetyError('只能撤销已完成操作')
             op = json.loads(row[0])
-            if op.get('operation_type')=='external_copy':raise SafetyError('外部归档保留原件，不自动删除已归档副本')
+            if op.get('operation_type') in ('external_copy','external_move'):raise SafetyError('外部归档不支持自动反向转移，请在资源管理器中核对处理')
             if safe_path(self.root, op['source']).exists(): raise SafetyError('原位置已占用，无法撤销')
             if manifest(safe_path(self.root, op['target'])) != op['manifest']: raise SafetyError('内容已变化，无法撤销')
             if app.state.get('paused', False): raise SafetyError('执行已暂停，请先恢复')
@@ -504,7 +515,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not target.is_dir(): raise SafetyError('目录不存在')
                 os.startfile(str(target))
                 result = {'opened':True}
-            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-remove','library-audit'}:
+            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute'}:
                 result = d.job(action, b)
             else: raise SafetyError('未知操作')
             self.send(200, result)

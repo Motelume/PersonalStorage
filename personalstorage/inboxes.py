@@ -9,6 +9,12 @@ from .scanning import metadata
 from .extraction import extract
 
 PREFIX='@inbox/'
+MODES={'copy':'复制归档，保留原件','move':'转移归档，成功后删除原件'}
+
+def mode(state,ident):
+    value=source_record(state,ident).get('import_mode','copy')
+    if value not in MODES:raise SafetyError('来源归档方式无效')
+    return value
 
 def settings(state):return state.get('inboxes',{'internal_enabled':True,'sources':[]})
 
@@ -45,14 +51,15 @@ def resolve(root,state,logical,*,enabled=True):
     if len(parts)<3 or not re.fullmatch('[0-9a-f]{32}',parts[1]):raise SafetyError('外部来源标识无效')
     return safe_path(source_root(root,state,parts[1],enabled),'/'.join(parts[2:]))
 
-def add(root,state,path,label=''):
+def add(root,state,path,label='',import_mode='copy'):
+    if import_mode not in MODES:raise SafetyError('请选择复制或转移归档')
     folder=validate_folder(root,path);data=settings(state)
     if sum(not s.get('removed') for s in data['sources'])>=20:raise SafetyError('最多登记20个外部收件箱')
     for old in data['sources']:
         previous=canonical_root(old['path'])
         if folder==previous and old['enabled']:raise SafetyError('这个文件夹已登记为收件箱')
         if old['enabled'] and (folder.is_relative_to(previous) or previous.is_relative_to(folder)):raise SafetyError('收件箱之间不能嵌套，避免重复扫描')
-    st=folder.stat();record={'id':uid(),'path':str(folder),'label':str(label).strip()[:80] or folder.name,'enabled':True,'identity':[st.st_dev,st.st_ino],'added_at':now()}
+    st=folder.stat();record={'id':uid(),'path':str(folder),'label':str(label).strip()[:80] or folder.name,'enabled':True,'identity':[st.st_dev,st.st_ino],'added_at':now(),'import_mode':import_mode}
     data['sources'].append(record);state.set('inboxes',data);return record
 
 def toggle(state,ident,enabled):
@@ -72,6 +79,14 @@ def toggle(state,ident,enabled):
         record['enabled']=enabled
     state.set('inboxes',data);return {'updated':True,'files_touched':False}
 
+def set_mode(state,ident,import_mode):
+    if import_mode not in MODES:raise SafetyError('请选择复制或转移归档')
+    data=settings(state);record=next((s for s in data['sources'] if s['id']==ident and not s.get('removed')),None)
+    if not record:raise SafetyError('只能调整已登记的外部收件箱')
+    if record.get('import_mode','copy')!=import_mode:
+        record['import_mode']=import_mode;record['mode_revision']=uid()
+    state.set('inboxes',data);return {'updated':True,'import_mode':import_mode,'files_touched':False}
+
 def remove(state,ident):
     data=settings(state);record=next((s for s in data['sources'] if s['id']==ident),None)
     if not record:raise SafetyError('只能移除已登记的外部来源')
@@ -87,12 +102,12 @@ def listing(root,state):
     data=settings(state);out=[{'id':'internal','label':'库内收件箱','path':str(Path(root)/'00_收件箱'),'enabled':data['internal_enabled'],'internal':True,'available':True}]
     for s in data['sources']:
         if s.get('removed'):continue
-        item={**s,'internal':False}
+        item={**s,'internal':False,'import_mode':s.get('import_mode','copy')}
         try:source_root(root,state,s['id'],enabled=False);item['available']=True
         except (OSError,SafetyError) as exc:item.update(available=False,error=str(exc))
         out.append(item)
     downloads=Path.home()/'Downloads'
-    return {'sources':out,'suggested_downloads':str(downloads) if downloads.is_dir() else None,'import_mode':'verified_copy_keep_source','maximum':20}
+    return {'sources':out,'suggested_downloads':str(downloads) if downloads.is_dir() else None,'import_modes':MODES,'default_import_mode':'copy','maximum':20}
 
 def scan_external(root,state,policy,cache,*,progress=None):
     rows=[];errors=[];skipped=0
@@ -106,21 +121,24 @@ def scan_external(root,state,policy,cache,*,progress=None):
                 try:
                     m=metadata(p)
                     if not m['file_count']:continue
+                    reuse=None
                     mark=state.db.execute('SELECT data FROM inbox_imports WHERE source=?',(logical,)).fetchone()
                     if mark:
                         import json
                         old=json.loads(mark['data']);target=safe_path(root,old['target'])
                         if old['source_metadata']==m['fingerprint'] and target.exists() and metadata(target)['fingerprint']==old['target_metadata']:
-                            skipped+=1;continue
+                            if s.get('import_mode','copy')=='copy':skipped+=1;continue
+                            reuse=old['target']
                     key=(logical,m['fingerprint'],policy.hash);features=cache.get(key)
                     if features is None:features=extract(p);cache[key]=features
                     if metadata(p)!=m:raise SafetyError('来源仍在变化，请稍后重试')
                     decision=policy.classify(features)
+                    if reuse:decision={'decision':'move','target_parent':str(Path(reuse).parent).replace('\\','/'),'rule_id':'verified_import','evidence':'复用本工具已校验的归档副本，本次仅清理原件'}
                     row={'source':logical,'source_id':s['id'],'source_label':s['label'],'absolute_path':str(p),'kind':m['kind'],'file_count':m['file_count'],
-                         'scan_fingerprint':m['fingerprint'],'integrity':'metadata_only','external':True,**decision}
+                         'scan_fingerprint':m['fingerprint'],'integrity':'metadata_only','external':True,'import_mode':s.get('import_mode','copy'),'reuse_import_target':reuse,**decision}
                     if decision['decision']=='move':row['target']=policy.target(decision['target_parent'],p.name)
                     else:row.update(reason=decision['reason'],evidence=decision['reason'],rule_id='unresolved')
-                    if row.get('target') and safe_path(root,row['target']).exists():row.update(decision='conflict',reason='库内已有同名目标，保留源文件')
+                    if row.get('target') and safe_path(root,row['target']).exists() and row['target']!=reuse:row.update(decision='conflict',reason='库内已有同名目标，保留源文件')
                     rows.append(row)
                 except (OSError,SafetyError) as exc:rows.append({'source':logical,'source_label':s['label'],'absolute_path':str(p),'external':True,'decision':'skip','reason':str(exc)})
         except (OSError,SafetyError) as exc:errors.append({'source_id':s['id'],'label':s['label'],'error':str(exc)})

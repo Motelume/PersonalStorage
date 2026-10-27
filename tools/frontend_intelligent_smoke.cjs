@@ -23,6 +23,25 @@ async function main(){
  await page.getByRole('button',{name:'执行这 1 项',exact:true}).click();await idle();
  assert(fs.existsSync(path.join(fixture.downloads,'download.txt')));assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/download.txt')));
  assert.equal(await page.locator('tbody tr').filter({hasText:'download.txt'}).count(),0);
+ // Change an already imported source to move, reuse the verified archive,
+ // force a sharing violation, and explicitly retry cleanup through history.
+ await nav('inboxes');const sourceCard=page.locator('.inbox-source').filter({hasText:'合成下载来源'});
+ await sourceCard.locator('[data-source-mode]').selectOption('move');await sourceCard.getByRole('button',{name:'保存方式',exact:true}).click();await idle();
+ assert.equal(await sourceCard.locator('[data-source-mode]').inputValue(),'move');
+ await nav('inbox');await page.locator('tbody tr').filter({hasText:'download.txt'}).waitFor();await idle();
+ await page.getByRole('checkbox',{name:'选择 download.txt',exact:true}).check();
+ await page.getByRole('button',{name:'预览已选计划',exact:false}).click();
+ const moveButton=page.getByRole('button',{name:'确认归档并删除转移项原件（1 项）',exact:true});await moveButton.waitFor();
+ assert(await page.locator('dialog').getByText('转移归档：复用已校验副本，本次仅清理原件。',{exact:true}).isVisible());
+ const held=fs.openSync(path.join(fixture.downloads,'download.txt'),'r');
+ try{await moveButton.click();await idle();}finally{fs.closeSync(held);}
+ assert(fs.existsSync(path.join(fixture.downloads,'download.txt')));
+ await nav('history');const retained=await page.evaluate(()=>S.operations.find(r=>r.status==='source_retained').id_handle);
+ await page.locator(`tr[data-row="${retained}"]`).click();
+ await page.getByRole('button',{name:'重新检查并清理原件…',exact:true}).click();
+ await page.getByRole('button',{name:'确认清理原件',exact:true}).click();await idle();
+ assert(!fs.existsSync(path.join(fixture.downloads,'download.txt')));
+ assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/download.txt')));
  await nav('review');await page.locator('tbody tr').filter({hasText:'unknown.txt'}).click();
  await page.locator('#file-purpose').fill('这是测试课程的专用学习笔记');
  await page.getByRole('button',{name:'补充说明并让AI分类',exact:true}).click();await page.getByRole('button',{name:'发送这 1 项至 DeepSeek',exact:true}).waitFor();
@@ -37,6 +56,6 @@ async function main(){
  await audit();const second=await page.evaluate(()=>S.boot.library_audit);assert(second.cache_hits>=2);assert(second.ai_items<first.ai_items);
  assert(fs.existsSync(path.join(fixture.root,'00_收件箱/note.txt')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/other.txt')));
  assert.deepEqual(errors,[]);
- console.log('PASS: inbox registration, unified rule-first/AI scan, verified external copy retaining source, import deduplication, user-context classification without folder browsing, explicit whole audit and unchanged approvals saving tokens.');
+ console.log('PASS: selectable copy/move per inbox, verified copy, existing archive reuse, explicit deletion preview, occupied source retained, history cleanup retry, AI classification and cached whole audit.');
 }
 main().catch(async e=>{console.error(e);if(page){console.error(await page.locator('#notice').textContent());console.error(await page.locator('dialog').textContent());}process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(fixture)fs.writeFileSync(fixture.stop,'stop');else child.kill();});
