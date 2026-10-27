@@ -6,7 +6,7 @@ from .paths import canonical_root,program_home,runtime_home
 from .common import SafetyError,linked,relpath,safe_path,uid,now,digest
 from .discovery import eligible_name
 from .scanning import metadata
-from .extraction import extract
+from .extraction import extract,signature
 
 PREFIX='@inbox/'
 MODES={'copy':'复制归档，保留原件','move':'转移归档，成功后删除原件'}
@@ -110,7 +110,7 @@ def listing(root,state):
     return {'sources':out,'suggested_downloads':str(downloads) if downloads.is_dir() else None,'import_modes':MODES,'default_import_mode':'copy','maximum':20}
 
 def scan_external(root,state,policy,cache,*,progress=None):
-    rows=[];errors=[];skipped=0
+    rows=[];errors=[];skipped=0;extractor_signature=signature()
     for s in settings(state)['sources']:
         if not s['enabled']:continue
         try:
@@ -129,13 +129,15 @@ def scan_external(root,state,policy,cache,*,progress=None):
                         if old['source_metadata']==m['fingerprint'] and target.exists() and metadata(target)['fingerprint']==old['target_metadata']:
                             if s.get('import_mode','copy')=='copy':skipped+=1;continue
                             reuse=old['target']
-                    key=(logical,m['fingerprint'],policy.hash);features=cache.get(key)
-                    if features is None:features=extract(p);cache[key]=features
+                    key=(logical,m['fingerprint'],policy.hash,extractor_signature);features=cache.get(key)
+                    if features is None:
+                        features=extract(p)
+                        if features.get('ocr',{}).get('status') not in ('error','timeout','unavailable'):cache[key]=features
                     if metadata(p)!=m:raise SafetyError('来源仍在变化，请稍后重试')
                     decision=policy.classify(features)
                     if reuse:decision={'decision':'move','target_parent':str(Path(reuse).parent).replace('\\','/'),'rule_id':'verified_import','evidence':'复用本工具已校验的归档副本，本次仅清理原件'}
                     row={'source':logical,'source_id':s['id'],'source_label':s['label'],'absolute_path':str(p),'kind':m['kind'],'file_count':m['file_count'],
-                         'scan_fingerprint':m['fingerprint'],'integrity':'metadata_only','external':True,'import_mode':s.get('import_mode','copy'),'reuse_import_target':reuse,**decision}
+                         'text_source':features.get('text_source','native' if features.get('text') else 'none'),'ocr':features.get('ocr'),'scan_fingerprint':m['fingerprint'],'integrity':'metadata_only','external':True,'import_mode':s.get('import_mode','copy'),'reuse_import_target':reuse,**decision}
                     if decision['decision']=='move':row['target']=policy.target(decision['target_parent'],p.name)
                     else:row.update(reason=decision['reason'],evidence=decision['reason'],rule_id='unresolved')
                     if row.get('target') and safe_path(root,row['target']).exists() and row['target']!=reuse:row.update(decision='conflict',reason='库内已有同名目标，保留源文件')

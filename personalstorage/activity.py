@@ -15,7 +15,8 @@ TITLES={'scan':'扫描收件箱','detail':'读取资料详情','preview':'生成
         'ai-clear-key':'移除AI密钥','pause':'调整执行暂停','authorize':'保存后台授权',
         'revoke':'撤销后台授权','watch-start':'启动后台','watch-stop':'停止后台',
         'inbox-add':'添加收件箱','inbox-toggle':'调整收件箱监测','inbox-mode':'调整归档方式','inbox-remove':'移除收件箱来源','library-audit':'全库位置复核',
-        'cleanup-preview':'核对待清理原件','cleanup-execute':'清理已校验原件','overview-search':'目录总览名称搜索'}
+        'cleanup-preview':'核对待清理原件','cleanup-execute':'清理已校验原件','overview-search':'目录总览名称搜索',
+        'ocr-configure':'保存本地OCR配置','ocr-clear-cache':'清理识别缓存','ocr-test':'离线OCR自检'}
 
 
 def begin(state,ident,action,page=None):

@@ -16,6 +16,9 @@ from personalstorage.ai import AIManager
 
 with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
     base=Path(tmp); root=base/'library'
+    if '--ocr-fixture' in sys.argv:
+        import os
+        os.environ['PERSONALSTORAGE_HOME']=str(base/'machine')
     (root/'00_收件箱').mkdir(parents=True)
     (root/'01_课程学习/测试课程').mkdir(parents=True)
     c=config(); c['executable_rules'][0]['all']=[{'field':'text','op':'contains','value':'course'}]
@@ -24,6 +27,17 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
     server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
+    if '--ocr-fixture' in sys.argv:
+        from test_ocr import sample_image,native_pdf
+        from PIL import Image
+        from pypdf import PdfWriter
+        # This is a generated test file, never a user's download or document.
+        for fixture_file in (root/'00_收件箱').iterdir():fixture_file.unlink()
+        sample_image(root/'00_收件箱/screenshot.png')
+        native_pdf(root/'00_收件箱/native.pdf')
+        with Image.open(root/'00_收件箱/screenshot.png') as image:image.save(base/'scan.pdf','PDF')
+        writer=PdfWriter();writer.append(root/'00_收件箱/native.pdf');writer.append(base/'scan.pdf')
+        with (root/'00_收件箱/mixed.pdf').open('wb') as output:writer.write(output)
     if '--overview-fixture' in sys.argv:
         from personalstorage import overview
         for category in c['categories']:(root/category['root']).mkdir(exist_ok=True)

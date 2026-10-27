@@ -1,6 +1,12 @@
 from pathlib import Path
-import zipfile,re,json,sys,subprocess,os
+import zipfile,re,json,sys,subprocess,os,hashlib,tempfile,threading,sqlite3,importlib.util
 from xml.etree import ElementTree as ET
+from . import ocr
+from .common import linked,SafetyError
+
+_OCR_SLOT=threading.BoundedSemaphore(1)
+
+def signature():return ocr.signature()
 
 def _extract_local(path,limit=16000):
     p=Path(path); result={'name':p.name,'kind':'directory' if p.is_dir() else 'file','text':'','complete':False,'warnings':[]}
@@ -12,6 +18,9 @@ def _extract_local(path,limit=16000):
             with p.open('rb') as f: raw=f.read(limit*4+1)
             result['text']=raw.decode('utf-8-sig',errors='replace')[:limit]
             result['complete']=len(raw)<=limit*4 and len(result['text'])<limit
+        elif p.suffix.lower() in ocr.IMAGES or (p.suffix.lower()=='.pdf' and importlib.util.find_spec('pypdfium2') is not None):
+            options=json.loads(os.environ['PERSONALSTORAGE_OCR_JOB_SETTINGS']) if os.environ.get('PERSONALSTORAGE_OCR_JOB_SETTINGS') else ocr.settings()
+            return ocr.read_document(p,limit,options)
         elif p.suffix.lower()=='.pdf':
             from pypdf import PdfReader
             reader=PdfReader(p)
@@ -37,27 +46,75 @@ def _extract_local(path,limit=16000):
     except Exception as e: result['warnings'].append(type(e).__name__+': '+str(e)[:120])
     return result
 
-def extract(path,limit=16000,timeout=15):
+def _worker(p,limit,timeout,options=None):
+    environment=dict(os.environ)
+    if options is not None:environment['PERSONALSTORAGE_OCR_JOB_SETTINGS']=json.dumps(options)
+    if getattr(sys,'frozen',False):
+        with tempfile.TemporaryDirectory(prefix='personalstorage-extract-') as folder:
+            output=Path(folder)/'extracted.json'
+            done=subprocess.run([sys.executable,'--extract-worker',str(p),str(limit),str(output)],env=environment,capture_output=True,timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+            if done.returncode or not output.is_file():raise ValueError('只读解析子进程失败')
+            return json.loads(output.read_text(encoding='utf-8'))
+    done=subprocess.run([sys.executable,'-X','utf8','-m','personalstorage.extraction','--worker',str(p),str(limit)],env=environment,cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8',timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+    if done.returncode:raise ValueError('只读解析子进程失败')
+    return json.loads(done.stdout)
+
+def _version(path):
+    value=path.stat();return (value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
+
+def _sha(path):
+    value=hashlib.sha256()
+    with path.open('rb') as stream:
+        while block:=stream.read(4*1024*1024):value.update(block)
+    return value.hexdigest()
+
+def _trim(result,p,limit,hit=False):
+    result={**result,'name':p.name,'text':result.get('text','')[:limit],'warnings':list(result.get('warnings',[]))}
+    result['ocr']={**result.get('ocr',{}),'cache_hit':hit}
+    if result.get('text') and len(result['text'])>=limit:
+        result['complete']=False
+    return result
+
+def extract(path,limit=16000,timeout=None,*,force=False,options=None,use_cache=True):
     p=Path(path).absolute()
-    if p.is_dir() or p.suffix.lower() not in ('.pdf','.docx','.pptx','.xlsx','.zip'):
+    limit=max(1,min(16000,limit));candidate=p.suffix.lower() in ocr.IMAGES|{'.pdf'} and not p.is_dir()
+    if p.is_dir() or (not candidate and p.suffix.lower() not in ('.docx','.pptx','.xlsx','.zip')):
         return _extract_local(p,limit)
     fallback={'name':p.name,'kind':'file','text':'','complete':False,'warnings':[]}
     try:
         if p.stat().st_size>128*1024*1024:
             fallback['warnings'].append('正文/包解析超过128MiB预算；仍可按明确任务上下文整体归档，完整性哈希不省略')
             return fallback
-        if getattr(sys,'frozen',False):
-            import tempfile
-            with tempfile.TemporaryDirectory(prefix='personalstorage-extract-') as folder:
-                output=Path(folder)/'extracted.json'
-                done=subprocess.run([sys.executable,'--extract-worker',str(p),str(min(limit,16000)),str(output)],capture_output=True,timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-                if done.returncode or not output.is_file():raise ValueError('只读解析子进程失败')
-                return json.loads(output.read_text(encoding='utf-8'))
-        done=subprocess.run([sys.executable,'-X','utf8','-m','personalstorage.extraction','--worker',str(p),str(min(limit,16000))],cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,encoding='utf-8',timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        if done.returncode: raise ValueError('只读解析子进程失败')
-        return json.loads(done.stdout)
-    except subprocess.TimeoutExpired: fallback['warnings'].append('只读解析超时，已停止解析子进程，原文件保持不变')
-    except (OSError,ValueError) as e: fallback['warnings'].append(str(e)[:160])
+        if linked(p):raise SafetyError('拒绝链接或重解析点')
+        if not candidate:return _worker(p,limit,timeout or 15)
+        config=ocr.validate(options or ocr.settings());stamp=_version(p);content_hash=_sha(p)
+        if _version(p)!=stamp:raise SafetyError('识别前文件发生变化，请重试')
+        key=hashlib.sha256((content_hash+p.suffix.lower()+ocr.signature(config)).encode()).hexdigest();epoch=0
+        if use_cache:
+            try:
+                cached,epoch=ocr.cache_get(key)
+                if cached is not None and not force:return _trim(cached,p,limit,True)
+            except (OSError,ValueError,sqlite3.Error):fallback['warnings'].append('本机识别缓存不可用，本次直接识别')
+        # OCR sees an immutable generated snapshot, never a changing original.
+        with _OCR_SLOT,tempfile.TemporaryDirectory(prefix='personalstorage-ocr-input-') as folder:
+            snapshot=Path(folder)/('source'+p.suffix.lower());copied=hashlib.sha256()
+            with p.open('rb') as source,snapshot.open('xb') as target:
+                while block:=source.read(4*1024*1024):target.write(block);copied.update(block)
+            if copied.hexdigest()!=content_hash or _version(p)!=stamp:raise SafetyError('创建识别快照时文件变化，请重试')
+            result=_worker(snapshot,16000,timeout if timeout is not None else config['timeout'],config)
+        if _version(p)!=stamp or _sha(p)!=content_hash:raise SafetyError('识别期间原文件变化，旧结果未采用')
+        if options is None and config!=ocr.settings():raise SafetyError('识别配置已变化，请重新读取')
+        if use_cache:
+            try:ocr.cache_put(key,result,epoch)
+            except (OSError,ValueError,sqlite3.Error):result.setdefault('warnings',[]).append('本次识别成功，但缓存保存失败')
+        result.setdefault('warnings',[]).extend(fallback['warnings'])
+        return _trim(result,p,limit)
+    except subprocess.TimeoutExpired:
+        fallback['warnings'].append('本地识别/解析超时，工作进程已停止；可调整超时后重试')
+        if candidate:fallback['ocr']={'status':'timeout','cache_hit':False}
+    except (OSError,ValueError,SafetyError) as e:
+        fallback['warnings'].append(str(e)[:160])
+        if candidate:fallback['ocr']={'status':'error','cache_hit':False}
     return fallback
 
 if __name__=='__main__':

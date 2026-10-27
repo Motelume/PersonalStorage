@@ -137,6 +137,13 @@ def main(argv=None):
                 parsed=extract(sample)
                 if 'native extraction sample' not in parsed.get('text',''):raise SafetyError('打包版文档提取失败')
             result['bundled_document_extraction']=True
+            from .ocr import self_test
+            result['bundled_offline_ocr']=self_test()
+            window.evaluate_js('load("settings");true')
+            for _ in range(100):
+                if window.evaluate_js('document.getElementById("ocr-enabled") !== null'):break
+                time.sleep(.1)
+            else:raise SafetyError('OCR设置面板未显示')
             result.update(ok=True,**data)
         except Exception as exc:result['error']=str(exc)
         finally:

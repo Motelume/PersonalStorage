@@ -41,3 +41,5 @@ dist\PersonalStorage\PersonalStorage.exe --self-test-report .local\native-test-n
 实现依据：[pywebview安装](https://pywebview.flowrl.com/guide/installation.html)、[打包说明](https://pywebview.flowrl.com/guide/freezing.html)。
 
 0.7.0增加关系图与目录树，包含轻微漂浮、手动关联及名称定位。`tools/frontend_overview_smoke.cjs`验收交互、取消/切页、关联失效与状态保留；桌面自检增加七页和两种总览视图。
+
+0.8.0包含本地中文/英文OCR和PDFium组件，程序包体积随模型和CPU运行库增大。桌面自检增加实际离线图片识别与OCR设置面板；构建前必须安装完整OCR依赖。见[OCR说明](ocr-guide.md)。

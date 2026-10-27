@@ -21,7 +21,7 @@ from .recovery import undo
 from .review import resolve_external, review_context
 from .ai import AIManager
 from . import __version__
-from . import activity, scanning, inboxes, importing, classification, ai_audit,overview
+from . import activity, scanning, inboxes, importing, classification, ai_audit,overview,ocr
 
 STATIC = Path(__file__).with_name('web_static')
 
@@ -153,7 +153,7 @@ class Desktop:
             return {'app_version':__version__,'status': s, 'policy': app.policy.data, 'policy_hash': app.policy.hash, 'ai':ai,'library_audit':app.state.get('library_audit'),'ui_mode':'desktop' if getattr(self,'native_mode',False) else 'web',
                     'authorization_current': bool(auth and auth['policy_hash'] == app.policy.hash),
                     'authorization_scope_root': bool(auth and auth.get('include_root')),
-                    'model_enabled': ai['settings']['enabled'] and ai['configured']}
+                    'model_enabled': ai['settings']['enabled'] and ai['configured'],'ocr':ocr.status()}
 
     def pending(self, history=False):
         with self.app() as app:
@@ -219,6 +219,12 @@ class Desktop:
             {k: v for k, v in a.items() if k != 'manifest'} for a in plan['actions']]}
 
     def perform(self, app, action, b, job):
+        if action=='ocr-configure':
+            result=ocr.configure(b);self.scan_cache.clear();return result
+        if action=='ocr-clear-cache':
+            result=ocr.clear_cache();self.scan_cache.clear();return result
+        if action=='ocr-test':
+            job['phase']='本机合成图片离线识别自检';return ocr.self_test()
         if action=='inbox-add':return inboxes.add(app.root,app.state,b.get('path'),b.get('label',''),b.get('import_mode','copy'))
         if action=='inbox-mode':return inboxes.set_mode(app.state,b.get('id'),b.get('import_mode'))
         if action=='inbox-toggle':return inboxes.toggle(app.state,b.get('id'),b.get('enabled'))
@@ -273,7 +279,7 @@ class Desktop:
                     'evidence':'用户采用AI建议：'+result.get('reason','')},job)
         if action == 'scan':
             scan_started=time.monotonic()
-            job['phase'] = '快速读取收件箱，生成归属建议'
+            job['phase'] = '读取收件箱与必要的本地文字识别，生成建议'
             def progress(completed,total):job.update(completed=completed,total=total)
             result=scanning.scan(app.root,app.policy,self.scan_cache,include_root=b.get('include_root') is True,progress=progress) if inboxes.settings(app.state)['internal_enabled'] else {'rows':[],'scanned_at':now(),'elapsed_ms':0}
             external=inboxes.scan_external(app.root,app.state,app.policy,self.scan_cache)
@@ -291,7 +297,7 @@ class Desktop:
             obj = self.get(b['id']); path = inboxes.resolve(self.root,app.state,obj['path'])
             m = manifest(path); obj['fingerprint'] = digest(m)
             result = {'path': obj['path'], 'absolute_path': str(path), 'fingerprint': digest(m),
-                      'features': extract(path, limit=8000), 'file_count': len(m['files']),
+                      'features': extract(path, limit=8000,force=b.get('force_ocr') is True), 'file_count': len(m['files']),
                       'members': [f['path'] for f in m['files'][:80]]}
             if obj.get('review_id'):
                 row = app.state.db.execute('SELECT r.*,a.version AS av,a.data AS ad FROM reviews r LEFT JOIN assignments a ON a.item_id=r.item_id WHERE r.id=?', (obj['review_id'],)).fetchone()
@@ -526,10 +532,10 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
                 types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8','management.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
-                types.update({'overview.js':'text/javascript; charset=utf-8','overview.css':'text/css; charset=utf-8'})
+                types.update({'overview.js':'text/javascript; charset=utf-8','overview.css':'text/css; charset=utf-8','ocr.js':'text/javascript; charset=utf-8'})
                 return self.send(200, (STATIC / name).read_bytes(), types[name])
             else: return self.send(404, {'error':'页面不存在'})
             self.send(200, result)
@@ -583,7 +589,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not target.is_dir(): raise SafetyError('目录不存在')
                 os.startfile(str(target))
                 result = {'opened':True}
-            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute'}:
+            elif action in {'ai-configure','ai-test','ai-clear-key','ai-prepare','ai-run','ai-adopt','scan','detail','preview','execute','keep','resolve-external','review-export','review-import','recover','undo-preview','undo','pause','authorize','revoke','watch-start','watch-stop','snapshot','inbox-add','inbox-toggle','inbox-mode','inbox-remove','library-audit','cleanup-preview','cleanup-execute','ocr-configure','ocr-clear-cache','ocr-test'}:
                 result = d.job(action, b)
             else: raise SafetyError('未知操作')
             self.send(200, result)

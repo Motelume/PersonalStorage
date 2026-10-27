@@ -4,6 +4,7 @@ import json
 from .common import SafetyError,digest,manifest,safe_path,linked,now,uid,instance_lock
 from .discovery import eligible_name
 from .extraction import extract
+from .ocr import IMAGES
 
 def content_fingerprint(m):
     return digest({'kind':m['kind'],'directories':m.get('directories',[]),'files':[{k:f[k] for k in ('path','size','sha256')} for f in m['files']]})
@@ -34,9 +35,9 @@ def features(path,limit=4000):
             if len(Path(parent).relative_to(path).parts)>2:dirs[:]=[]
             for name in files:
                 p=Path(parent)/name
-                if p.suffix.lower() in ('.md','.txt','.pdf','.docx','.pptx') and not linked(p):candidates.append(p)
+                if p.suffix.lower() in IMAGES|{'.md','.txt','.pdf','.docx','.pptx'} and not linked(p):candidates.append(p)
             if len(candidates)>=30:break
-        candidates.sort(key=lambda p:(p.name.casefold() not in ('readme.md','readme.txt'),len(p.parts),p.name))
+        candidates.sort(key=lambda p:(p.name.casefold() not in ('readme.md','readme.txt'),p.suffix.lower() in IMAGES,len(p.parts),p.name))
         for p in candidates[:3]:
             item=extract(p,limit=max(1,budget))
             fragment=item.get('text','')[:budget]

@@ -1,0 +1,6 @@
+# Optional local recognition; models are included in the pinned RapidOCR wheel.
+rapidocr==3.4.2
+onnxruntime==1.31.1
+pypdfium2==5.14.0
+Pillow>=11
+pypdf

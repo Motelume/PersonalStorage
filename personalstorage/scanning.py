@@ -7,7 +7,7 @@ import time
 
 from .common import SafetyError, digest, linked, safe_path, uid, now
 from .discovery import discover, eligible_name
-from .extraction import extract
+from .extraction import extract,signature
 from .planner import in_scope
 
 
@@ -41,22 +41,22 @@ def scan(root,policy,cache,*,include_root=False,stable_seconds=1,progress=None):
         except (OSError,SafetyError) as exc:errors[source]=str(exc)
     # All candidates share one observation interval instead of one sleep each.
     if first:time.sleep(max(0,stable_seconds-(time.monotonic()-started)))
-    targets=set();rows=[];hits=0
+    targets=set();rows=[];hits=0;extractor_signature=signature()
     def inspect(source):
         try:
             if source in errors:raise SafetyError(errors[source])
             path=safe_path(root,source);current=metadata(path)
             if current!=first[source]:raise SafetyError('文件仍在变化')
             if not current['file_count']:raise SafetyError('空文件夹保持原位')
-            key=(source,current['fingerprint'],policy.hash)
+            key=(source,current['fingerprint'],policy.hash,extractor_signature)
             cached=cache.get(key)
             features=cached if cached is not None else extract(path)
             if cached is None:
                 if metadata(path)!=current:raise SafetyError('读取时源文件变化')
-                cache[key]=features
+                if features.get('ocr',{}).get('status') not in ('error','timeout','unavailable'):cache[key]=features
             decision=policy.classify(features)
             row={'source':source,'kind':current['kind'],'file_count':current['file_count'],
-                 'scan_fingerprint':current['fingerprint'],'integrity':'metadata_only','decision':decision['decision']}
+                 'text_source':features.get('text_source','native' if features.get('text') else 'none'),'ocr':({**features['ocr'],'cache_hit':True} if cached is not None and features.get('ocr') else features.get('ocr')),'scan_fingerprint':current['fingerprint'],'integrity':'metadata_only','decision':decision['decision']}
             if decision['decision']=='review':
                 row.update(reason=decision['reason'],candidates=decision.get('candidates',[]),rule_id='unresolved',evidence=decision['reason'])
                 row['target']=policy.target(policy.data['review_path'],path.name,review=True)
@@ -74,4 +74,4 @@ def scan(root,policy,cache,*,include_root=False,stable_seconds=1,progress=None):
             rows.append(row)
             if progress:progress(index,len(sources))
     if len(cache)>4096:cache.clear()
-    return {'rows':rows,'scanned_at':now(),'elapsed_ms':round((time.monotonic()-started)*1000),'cache_hits':hits,'content_hashed':False}
+    return {'rows':rows,'scanned_at':now(),'elapsed_ms':round((time.monotonic()-started)*1000),'cache_hits':hits,'content_hashed':any(row.get('ocr') is not None for row in rows)}
