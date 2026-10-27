@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert/strict');
 const root = path.resolve(__dirname,'..');
-const child = spawn(process.env.PYTHON || 'python',['-X','utf8',path.join(__dirname,'web_fixture.py')],{cwd:root,windowsHide:true});
+const child = spawn(process.env.PYTHON || 'python',['-X','utf8',path.join(__dirname,'web_fixture.py'),'--review-focus-fixture'],{cwd:root,windowsHide:true});
 let fixture, browser, page;
 async function run(){
  fixture = await new Promise((resolve,reject)=>{const rl=readline.createInterface({input:child.stdout});rl.once('line',line=>{try{resolve(JSON.parse(line));}catch(e){reject(e);}});child.stderr.on('data',d=>process.stderr.write(d));child.once('error',reject);child.once('exit',c=>reject(Error('fixture exited '+c)));});
@@ -16,6 +16,8 @@ async function run(){
  const errors=[];p.on('pageerror',e=>errors.push(String(e)));
  const idle=()=>p.waitForFunction(()=>!S.busy&&!S.acting);
  const nav=async name=>{await p.locator(`nav [data-page=${name}]`).click();await p.waitForTimeout(150);await idle();};
+ const nextReviewName=async()=>{const names=await p.locator('#rows tbody tr strong').allTextContents(),current=await p.locator('#detail .detail-name strong').textContent();const index=names.indexOf(current);assert(index>=0);return names[index+1]||names.slice(0,index)[0]||null;};
+ const assertReviewFocus=async expected=>{assert.equal(await p.locator('#detail pre').count(),0);if(expected){assert.equal(await p.locator('#detail .detail-name strong').textContent(),expected);assert.equal(await p.locator('#rows tr.selected strong').textContent(),expected);}else{assert.equal((await p.locator('#detail').textContent()).trim(),'');assert(await p.evaluate(()=>S.focus===null&&S.detail===null));}};
  await p.goto(fixture.url);await p.locator('tbody tr').filter({hasText:'note.txt'}).waitFor();await idle();
  assert.equal(await p.locator('nav button').count(),7);
  await p.getByRole('checkbox',{name:'选择 note.txt',exact:true}).check();
@@ -42,18 +44,36 @@ async function run(){
  assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/unknown.txt')));
  await nav('review');await p.locator('tbody tr').filter({hasText:'unknown.txt'}).click();
  await p.getByRole('button',{name:'读取详情与预览'}).click();await idle();
+ const afterKeep=await nextReviewName();assert(afterKeep);
  await p.getByRole('button',{name:'保留当前归属'}).click();await idle();
  await p.getByText('已保留当前归属。',{exact:true}).waitFor();
  assert.equal(await p.locator('tbody tr').filter({hasText:'unknown.txt'}).count(),0);
+ await assertReviewFocus(afterKeep);
  // Simulate a user moving an outstanding item in File Explorer.
  const externalSource=path.join(fixture.root,'00_收件箱/note.txt');
  const externalTarget=path.join(fixture.root,'01_课程学习/测试课程/note.txt');
  fs.renameSync(externalSource,externalTarget);
  const externalStat=fs.statSync(externalTarget);
  await nav('review');await p.locator('tbody tr').filter({hasText:'note.txt'}).click();
+ const afterExternal=await nextReviewName();
  await p.getByRole('button',{name:'已在资源管理器处理',exact:true}).click();await idle();
  await p.getByText('已标记为自行处理并移出待办，可在“已处理记录”中查看。未改动实际文件。',{exact:true}).waitFor();
  assert.equal(await p.locator('tbody tr').filter({hasText:'note.txt'}).count(),0);
+ await assertReviewFocus(afterExternal);
+ // An exhausted filtered list clears details even while other pending files exist.
+ // Finishing in the background must not overwrite the page currently being read.
+ await p.locator('#query').fill('pending-a.txt');await p.locator('tbody tr').filter({hasText:'pending-a.txt'}).click();
+ await p.getByRole('button',{name:'读取详情与预览'}).click();await idle();
+ await p.getByRole('button',{name:'保留当前归属'}).click();await nav('history');
+ await p.waitForFunction(()=>!view('review').job&&!view('review').acting);assert.equal(await p.evaluate(()=>S.page),'history');
+ await nav('review');await assertReviewFocus(null);assert(await p.evaluate(()=>S.pending.some(r=>r.path.endsWith('pending-b.txt'))));
+ await p.locator('#query').fill('');
+ for(let count=0;count<10&&await p.locator('#rows tbody tr').count();count++){
+  await p.locator('#rows tbody tr').first().click();const expected=await nextReviewName();
+  await p.getByRole('button',{name:'读取详情与预览'}).click();await idle();
+  await p.getByRole('button',{name:'保留当前归属'}).click();await idle();await assertReviewFocus(expected);
+ }
+ assert.equal(await p.locator('#rows tbody tr').count(),0);await assertReviewFocus(null);
  await p.locator('#filter').selectOption('resolved_external');
  await p.locator('tbody tr').filter({hasText:'note.txt'}).click();
  await p.getByText('仅关闭待办，保留历史记录；未核验新位置。',{exact:false}).waitFor();

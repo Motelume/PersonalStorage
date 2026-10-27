@@ -34,6 +34,15 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
         (root/'00_收件箱'/name).write_text(text,encoding='utf-8')
     server=make_server(root,base/'profile')
     server.desktop.credential_vault=CredentialVault(base/'test-credentials.sqlite3')
+    if '--review-focus-fixture' in sys.argv:
+        from personalstorage.classification import human_task
+        from personalstorage.common import manifest
+        with server.desktop.app() as app:
+            for name in ('pending-a.txt','pending-b.txt'):
+                relative='01_课程学习/测试课程/'+name;(root/relative).write_text('course synthetic review sample',encoding='utf-8')
+                m=manifest(root/relative);item=app.state.observe(relative,m['kind'],m)
+                with app.state.db:app.state.db.execute('INSERT INTO assignments VALUES(?,?,?)',(item,1,json.dumps({'destination_parent':'01_课程学习/测试课程','evidence':'synthetic explicit assignment'})))
+                human_task(app,relative,m,'synthetic pending assignment')
     if '--rules-fixture' in sys.argv:
         original_perform=server.desktop.perform
         def delayed_rules(app,action,body,job):
