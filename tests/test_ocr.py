@@ -54,6 +54,7 @@ class OCRTests(unittest.TestCase):
         renamed=extraction.extract(copied);self.assertTrue(renamed['ocr']['cache_hit']);self.assertEqual(renamed['name'],'renamed.png');self.assertEqual(self.image.read_bytes(),before)
 
     def test_real_chinese_and_english(self):
+        if not (Path(os.environ.get('WINDIR',r'C:\Windows'))/'Fonts/msyh.ttc').is_file():self.skipTest('Chinese font is unavailable for generating the synthetic fixture')
         sample_image(self.image,True);result=extraction.extract(self.image)
         self.assertIn('信号',result['text'],result);self.assertIn('course',result['text'])
 
