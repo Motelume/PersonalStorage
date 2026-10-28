@@ -296,7 +296,13 @@ class RuleManager:
             published_model=copy.deepcopy(draft['model']);published_model['config']=data
             entry={'id':uid(),'at':now(),'hash':digest(data),'policy_version':data['policy_version'],'source':'editor','summary':'；'.join(c['field'] for c in plan['changes']) or '仅管理信息更新','model':published_model,'test':draft.get('test')}
             backup=self.state.profile/'rule-backups'/entry['id'];backup.mkdir(parents=True)
-            write_json(backup/'classification-config.json',policy.data);write_json(backup/'manager.json',saved)
+            try:write_json(backup/'classification-config.json',policy.data);write_json(backup/'manager.json',saved)
+            except OSError as exc:
+                if getattr(exc,'winerror',None)!=17:raise
+                # Redirected user folders may reject even same-directory replacement.
+                # Keep atomic writes; fall back only for generated private backups.
+                backup=safe_path(self.root,'_整理规则/规则备份/'+entry['id']);backup.mkdir(parents=True)
+                write_json(backup/'classification-config.json',policy.data);write_json(backup/'manager.json',saved)
             saved['history']=[entry]+saved.get('history',[])[:49];saved['published']=entry;saved['draft']=None
             journal={'old_hash':policy.hash,'new_hash':entry['hash'],'manager':saved,'effective_changed':changed}
             self.state.set('rule_publish_journal',journal)

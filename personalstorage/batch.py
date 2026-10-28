@@ -31,16 +31,21 @@ def perform(desktop,app,action,body,job):
             except Cancelled:raise
             except (OSError,SafetyError) as exc:errors.append({'source':obj['path'],'error':str(exc)})
         return {'ticket':ticket(desktop,'batch',plans),'plans':plans,'errors':errors,'files_moved':False}
+    if action=='wb-batch-results':return app.state.get('batch_last_result',{'results':[]})
     if action=='wb-batch-execute':
         plans=consume(desktop,body,'batch');ids=body.get('plan_ids')
         if not isinstance(ids,list) or not ids or len(set(ids))!=len(ids) or set(ids)-{p['id'] for p in plans}:raise SafetyError('请选择预览中要执行的项目')
         results=[]
+        app.state.set('batch_last_result',{'results':results,'complete':False})
         for plan in plans:
             if plan['id'] not in ids:continue
             checkpoint();job['phase']=f'逐项核验并归档，已完成 {len(results)} 项'
             try:results.extend(desktop.perform(app,'execute',{'plan_id':plan['id']},job)['results'])
             except Cancelled:raise
             except (OSError,SafetyError) as exc:results.append({'source':plan['actions'][0]['source'],'status':'failed','error':str(exc)})
+            app.state.set('batch_last_result',{'results':results,'complete':False})
+        results.extend({'source':p['actions'][0]['source'],'status':'skipped'} for p in plans if p['id'] not in ids)
+        app.state.set('batch_last_result',{'results':results,'complete':True})
         return {'results':results}
     if action=='wb-batch-ai-preview':
         rows=selected(desktop,body,50);common=body.get('common','');notes=body.get('notes',{})

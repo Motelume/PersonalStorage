@@ -31,12 +31,13 @@ def files(root):
                     seen+=1
                     if seen>100000:raise SafetyError('本次遍历超过十万文件预算，请选择更小范围')
                     yield entry
-        except OSError:continue
+        except OSError as exc:raise SafetyError('目录读取未完成，本次不移除未见到的索引：'+str(folder)) from exc
 
 
 def build(app,job=None,budget=500):
     if not isinstance(budget,int) or isinstance(budget,bool) or not 1<=budget<=10000:raise SafetyError('每批索引文件数须在1至10000')
     db=database(app.state);report={'updated':0,'cached':0,'errors':0,'remaining':0,'deleted':0,'complete':True};seen=set()
+    app.state.set('search_report',{**report,'at':now(),'running':True})
     try:
         for path in files(app.root):
             checkpoint();relative=path.relative_to(app.root).as_posix();seen.add(relative);st=path.stat()
@@ -53,19 +54,33 @@ def build(app,job=None,budget=500):
                     db.execute('INSERT OR REPLACE INTO documents VALUES(?,?,?,?,?,?,?)',(relative,stamp,text,result.get('text_source','native'),status,'；'.join(result.get('warnings',[]))[:1000],now()))
                     db.execute('DELETE FROM document_fts WHERE path=?',(relative,));db.execute('INSERT INTO document_fts VALUES(?,?)',(relative,relative+'\n'+text))
                 report['updated']+=1
-            except (OSError,SafetyError,ValueError):report['errors']+=1
+            except (OSError,SafetyError,ValueError):report['errors']+=1;report['remaining']+=1;report['complete']=False
             if job is not None:job.update(phase=f"本地索引：更新{report['updated']}，复用{report['cached']}，未覆盖{report['remaining']}")
         for row in db.execute('SELECT path FROM documents').fetchall():
             if row['path'] not in seen:
                 with db:db.execute('DELETE FROM documents WHERE path=?',(row['path'],));db.execute('DELETE FROM document_fts WHERE path=?',(row['path'],))
                 report['deleted']+=1
-        app.state.set('search_report',{**report,'at':now()});return report
+        app.state.set('search_report',{**report,'at':now(),'running':False});app.state.set('search_freshness',None);return report
+    except BaseException:
+        app.state.set('search_report',{**report,'at':now(),'running':False,'complete':False,'interrupted':True});raise
     finally:db.close()
 
 
 def status(app):
     db=database(app.state)
-    try:return {'documents':db.execute('SELECT COUNT(*) FROM documents').fetchone()[0],'with_text':db.execute("SELECT COUNT(*) FROM documents WHERE text<>''").fetchone()[0],'last':app.state.get('search_report'),'private':True}
+    try:return {'documents':db.execute('SELECT COUNT(*) FROM documents').fetchone()[0],'with_text':db.execute("SELECT COUNT(*) FROM documents WHERE text<>''").fetchone()[0],'last':app.state.get('search_report'),'freshness':app.state.get('search_freshness'),'private':True}
+    finally:db.close()
+
+
+def freshness(app):
+    db=database(app.state);seen=set();new=changed=0;sig=signature()
+    try:
+        old={r['path']:r['stamp'] for r in db.execute('SELECT path,stamp FROM documents')}
+        for p in files(app.root):
+            checkpoint();relative=p.relative_to(app.root).as_posix();seen.add(relative);st=p.stat();stamp=digest([st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns,sig])
+            if relative not in old:new+=1
+            elif old[relative]!=stamp:changed+=1
+        result={'at':now(),'new':new,'changed':changed,'missing':len(set(old)-seen),'total':len(seen),'pending':new+changed,'metadata_only':True};app.state.set('search_freshness',result);return result
     finally:db.close()
 
 

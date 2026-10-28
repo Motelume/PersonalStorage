@@ -41,8 +41,13 @@ def suggest(app,source):
         features=extract(p,limit=4000)
         if manifest(p)!=before:raise SafetyError('读取期间文件变化')
         result['reason']='没有找到可靠的标题，保留原名，可补充说明后请求AI建议'
-        for line in features.get('text','').splitlines()[:12]:
+        lines=features.get('text','').splitlines()[:12]
+        candidates=[]
+        for index,line in enumerate(lines):
             title=re.sub(r'^\s*(?:#{1,6}\s*|标题[：:]\s*)','',line).strip()
+            if title.startswith('关于') and not title.endswith(('通知','方案','公告')) and index+1<len(lines):
+                continuation=lines[index+1].strip()
+                if continuation.endswith(('通知','方案','公告')) and len(title+continuation)<=64:title+=continuation
             if not 4<=len(title)<=64 or len(re.findall(r'[\u4e00-\u9fffA-Za-z]',title))<4:continue
             if re.search(r'\b(?:sk-|password|token|secret|api.?key)\b|身份证|账号|密码|学号|姓名|手机|\d{11,}|@|https?://',title,re.I):continue
             if re.fullmatch(r'(?:part|chapter|section|module)\s+[\w\d .-]+',title,re.I) and len(title.split())<=3:continue
@@ -51,7 +56,8 @@ def suggest(app,source):
             try:name=check_name(source,title+p.suffix)
             except SafetyError:continue
             if ambiguous(name):continue
-            result.update(suggested=name,reason='依据正文首部标题生成；请核对是否准确');break
+            if name not in candidates:candidates.append(name)
+        if candidates:result.update(suggested=candidates[0],candidates=candidates[:3],reason='依据正文标题和相邻标题行生成；可选择候选并核对用途')
     return result
 
 

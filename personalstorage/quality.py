@@ -34,4 +34,5 @@ def evaluate(app,cases,job=None,reference_source='user_supplied_labels'):
         if job is not None:job['phase']=f'按人工标注评估 {index+1}/{len(cases)}'
     result={'at':now(),'samples':len(rows),'accuracy':correct/len(rows),'move_precision':move_correct/move_total if move_total else None,'move_recall':move_correct/expected_moves if expected_moves else None,'review_fraction':sum(r['actual']['decision']=='review' for r in rows)/len(rows),'median_ms':round(statistics.median(times),2),'p95_ms':round(sorted(times)[max(0,int(len(times)*.95)-1)],2),'rows':rows,'ground_truth':'user_supplied_labels','files_moved':False,'ai_called':False}
     result.update(ground_truth=reference_source,evaluation_mode='rule_only_without_assignments_or_ai',errors=sum(r['actual']['decision']=='error' for r in rows),text_extracted=sum(r['text_chars']>0 for r in rows),partial_extractions=sum(not r['extraction_complete'] for r in rows))
+    result['policy_hash']=app.policy.hash
     app.state.set('quality_report',result);return result

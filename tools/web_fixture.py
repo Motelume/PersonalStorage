@@ -43,6 +43,12 @@ with tempfile.TemporaryDirectory(prefix='storage-ui-') as tmp:
                 m=manifest(root/relative);item=app.state.observe(relative,m['kind'],m)
                 with app.state.db:app.state.db.execute('INSERT INTO assignments VALUES(?,?,?)',(item,1,json.dumps({'destination_parent':'01_课程学习/测试课程','evidence':'synthetic explicit assignment'})))
                 human_task(app,relative,m,'synthetic pending assignment')
+    if '--workflow-fixture' in sys.argv:
+        workflow_perform=server.desktop.perform
+        def delayed_workflow(app,action,body,job):
+            if action=='wb-batch-execute':time.sleep(.7)
+            return workflow_perform(app,action,body,job)
+        server.desktop.perform=delayed_workflow
     if '--rules-fixture' in sys.argv:
         original_perform=server.desktop.perform
         def delayed_rules(app,action,body,job):

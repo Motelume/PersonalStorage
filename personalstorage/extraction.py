@@ -9,7 +9,7 @@ _OCR_SLOT=threading.BoundedSemaphore(1)
 def signature():
     from .recognition import home
     cache=home()/'results.sqlite3'
-    return ocr.signature()+(':enhanced-'+str(cache.stat().st_mtime_ns) if cache.exists() else '')
+    return 'text-layout-v2:'+ocr.signature()+(':enhanced-'+str(cache.stat().st_mtime_ns) if cache.exists() else '')
 
 def _extract_local(path,limit=16000):
     p=Path(path); result={'name':p.name,'kind':'directory' if p.is_dir() else 'file','text':'','complete':False,'warnings':[]}
@@ -22,7 +22,11 @@ def _extract_local(path,limit=16000):
             return read(p,limit)
         elif p.suffix.lower() in ('.txt','.md','.csv','.json'):
             with p.open('rb') as f: raw=f.read(limit*4+1)
-            result['text']=raw.decode('utf-8-sig',errors='replace')[:limit]
+            import codecs
+            try:decoded=codecs.getincrementaldecoder('utf-8-sig')().decode(raw,final=False)
+            except UnicodeDecodeError:
+                decoded=raw.decode('gb18030',errors='replace');result['warnings'].append('按GB18030兼容编码解码，请核对文字')
+            result['text']=decoded[:limit]
             result['complete']=len(raw)<=limit*4 and len(result['text'])<limit
         elif p.suffix.lower() in ocr.IMAGES or (p.suffix.lower()=='.pdf' and importlib.util.find_spec('pypdfium2') is not None):
             options=json.loads(os.environ['PERSONALSTORAGE_OCR_JOB_SETTINGS']) if os.environ.get('PERSONALSTORAGE_OCR_JOB_SETTINGS') else ocr.settings()
@@ -45,7 +49,11 @@ def _extract_local(path,limit=16000):
                     if info.file_size>2*1024*1024: result['warnings'].append('XML超限未读取'); continue
                     data=z.read(name)
                     if b'<!DOCTYPE' in data or b'<!ENTITY' in data: raise ValueError('拒绝XML实体声明')
-                    texts.append(' '.join(x.text or '' for x in ET.fromstring(data).iter() if x.tag.endswith('}t') or x.tag.endswith('}v')))
+                    tree=ET.fromstring(data)
+                    if p.suffix.lower()=='.docx':
+                        paragraphs=[''.join(t.text or '' for t in node.iter() if t.tag.endswith('}t')) for node in tree.iter() if node.tag.endswith('}p')]
+                        texts.append('\n'.join(paragraphs) if paragraphs else ' '.join(t.text or '' for t in tree.iter() if t.tag.endswith('}t')))
+                    else:texts.append(' '.join(x.text or '' for x in tree.iter() if x.tag.endswith('}t') or x.tag.endswith('}v')))
                 result['text']='\n'.join(texts)[:limit]
                 result['complete']=False
         else: result['warnings'].append('格式暂无只读解析器；不得仅凭扩展名分类')

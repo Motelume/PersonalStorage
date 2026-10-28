@@ -1,5 +1,5 @@
 const {chromium}=require('playwright'),{spawn}=require('child_process'),readline=require('readline'),fs=require('fs'),path=require('path'),assert=require('assert/strict');
-const root=path.resolve(__dirname,'..'),child=spawn(process.env.PYTHON||'python',['-X','utf8',path.join(__dirname,'web_fixture.py'),'--ai-fixture'],{cwd:root,windowsHide:true});let fixture,browser,page;
+const root=path.resolve(__dirname,'..'),child=spawn(process.env.PYTHON||'python',['-X','utf8',path.join(__dirname,'web_fixture.py'),'--ai-fixture','--workflow-fixture'],{cwd:root,windowsHide:true});let fixture,browser,page;
 async function main(){
  fixture=await new Promise((resolve,reject)=>{readline.createInterface({input:child.stdout}).once('line',s=>{try{resolve(JSON.parse(s));}catch(e){reject(e);}});child.stderr.on('data',d=>process.stderr.write(d));child.once('error',reject);});
  const original=path.join(fixture.root,'00_收件箱/新建文本文档.txt');fs.writeFileSync(original,'# 控制系统实验记录\ncourse experiments');const bytes=fs.readFileSync(original);
@@ -19,8 +19,15 @@ async function main(){
  await act('wf-ai-preview');assert.equal(await page.evaluate(()=>S.boot.ai.calls_today),0);assert((await page.locator('dialog').textContent()).includes('2 项'));await act('wf-ai-run');await act('close-modal');
  assert(fs.existsSync(path.join(fixture.root,'00_收件箱/other.txt')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));
  await nav('review');await select('other.txt');await select('unknown.txt');await act('wf-adopt');assert.equal(await page.locator('[data-wf-plan]').count(),2);
- const items=page.locator('dialog .preview-item');const unknown=items.filter({hasText:'unknown.txt'});await unknown.locator('[data-wf-plan]').uncheck();await act('wf-execute');
+ const items=page.locator('dialog .preview-item');const unknown=items.filter({hasText:'unknown.txt'});await unknown.locator('[data-wf-plan]').uncheck();await page.locator('[data-action=wf-execute]').click();await nav('history');await page.waitForFunction(()=>!view('review').job&&!view('review').acting);assert.equal(await page.evaluate(()=>S.page),'history');await nav('review');await page.locator('#wf-result-rows .preview-item').first().waitFor();
  assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/other.txt')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));await act('close-modal');
+ await act('wf-results');await page.locator('#wf-result-filter').selectOption('skipped');assert((await page.locator('#wf-result-rows').textContent()).includes('unknown.txt'));await act('close-modal');
+ await nav('overview');await act('lab-index-check');assert((await page.locator('#content').textContent()).includes('元数据检查'));
+ await nav('settings');await page.locator('[data-tab=runtime]').click();await page.locator('summary').filter({hasText:'真实样本与规则/AI对比'}).click();
+ await act('lab-sample');assert((await page.locator('dialog').textContent()).includes('unlabelled'));await act('close-modal');
+ await page.locator('#lab-cases').fill(JSON.stringify([{path:'01_课程学习/测试课程/other.txt',expected_target:'01_课程学习/测试课程'}]));await page.locator('#lab-source').selectOption('assistant_reviewed_reference');
+ await act('lab-ai');assert(!(await page.locator('dialog pre').textContent()).includes('expected_target'));await act('lab-run');assert((await page.locator('dialog').textContent()).includes('ai_accuracy'));await act('close-modal');
+ await act('lab-candidates');assert((await page.locator('#notice').textContent()).includes('停用候选'));
  await page.setViewportSize({width:1024,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  assert.deepEqual(errors,[]);console.log('PASS content rename preview/execute/undo, unchanged bytes, selected-only bulk manual decisions, shared/per-file AI notes, consent, independent AI adoption and subset execution');
 }

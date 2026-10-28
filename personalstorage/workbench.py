@@ -23,6 +23,20 @@ def status(app):
 
 
 def perform(desktop,app,action,body,job):
+    if action=='wb-index-check':return searching.freshness(app)
+    if action.startswith('wb-lab-'):
+        from . import quality_lab
+        if action=='wb-lab-sample':return quality_lab.sample(app,body.get('limit',40))
+        if action=='wb-lab-rules':
+            candidates=quality_lab.rule_candidates(app,body.get('cases',[]));rm=RuleManager(app);s=rm.status();draft=s['draft'];data=(draft or {}).get('model') or s['live']
+            from .common import digest
+            known={digest([r['rule'].get('when',r['rule'].get('all')),r['rule']['target_parent']]) for r in data['rules']}
+            candidates=[r for r in candidates if digest([r['rule']['when'],r['rule']['target_parent']]) not in known];data['rules'].extend(candidates)
+            return {'candidates':len(candidates),'draft':rm.save(data,(draft or {}).get('revision'),s['policy_hash'])}
+        manager=AIManager(app,vault=desktop.credential_vault,provider_factory=desktop.ai_provider_factory)
+        if action=='wb-lab-preview':
+            packet=quality_lab.prepare(app,manager,body.get('cases'),body.get('reference_source','user_supplied_labels'));return {'ticket':ticket(desktop,'lab',packet),'documents':packet['documents'],'model':packet['settings']['model'],'samples':len(packet['bindings'])}
+        if action=='wb-lab-run':return quality_lab.compare(app,manager,consume(desktop,body,'lab'),job)
     if action.startswith('wb-batch-'):
         from .batch import perform as batch_perform
         return batch_perform(desktop,app,action,body,job)
@@ -130,7 +144,7 @@ def perform(desktop,app,action,body,job):
     if action=='wb-rollback':return distribution.rollback(app,consume(desktop,body,'rollback'))
     if action=='wb-quality':
         from .quality import evaluate
-        return evaluate(app,body.get('cases'),job)
+        return evaluate(app,body.get('cases'),job,reference_source=body.get('reference_source','user_supplied_labels'))
     if action=='wb-diagnostics':
         from . import ocr
         import shutil

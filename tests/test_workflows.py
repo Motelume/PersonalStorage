@@ -25,6 +25,9 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(SafetyError):renaming.preview(self.app,'00_收件箱/'+p.name,name,'evidence')
         self.file('existing.txt')
         with self.assertRaises(SafetyError):renaming.preview(self.app,'00_收件箱/'+p.name,'existing.txt','evidence')
+    def test_wrapped_notice_title_preserves_both_lines(self):
+        p=self.file(text='关于开展读书活动\n红色教育主题通知\n活动说明');result=renaming.suggest(self.app,'00_收件箱/'+p.name)
+        self.assertEqual(result['suggested'],'关于开展读书活动红色教育主题通知.txt')
     def test_rename_recovery_undo_and_search(self):
         p=self.file();original=p.read_bytes();before=manifest(p);self.app.state.observe('00_收件箱/'+p.name,'file',before);searching.build(self.app)
         plan=renaming.preview(self.app,'00_收件箱/'+p.name,'控制理论笔记.txt','title')
