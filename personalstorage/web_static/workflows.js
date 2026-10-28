@@ -1,0 +1,76 @@
+'use strict';
+function wfRows(page=S.page){return page==='inbox'?S.rows:S.pending;}
+function wfPath(r){return r.path||r.source;}
+function wfChosen(page=S.page){const paths=view(page).batchPaths||new Set();return wfRows(page).filter(r=>paths.has(wfPath(r))&&r.available!==false);}
+const wfBaseRows=renderRows;
+renderRows=function(){
+ wfBaseRows();if(!['inbox','review'].includes(S.page)||['errors','resolved_external'].includes(S.filter))return;
+ const v=view(),paths=v.batchPaths||(v.batchPaths=new Set()),available=new Set(wfRows().filter(r=>r.available!==false).map(wfPath));
+ for(const p of paths)if(!available.has(p))paths.delete(p);
+ for(const row of $$('#rows [data-row]')){const r=wfRows().find(r=>r.id===row.dataset.row);if(!r||r.available===false)continue;row.insertAdjacentHTML('afterbegin',`<td><input type="checkbox" data-wf-select="${esc(wfPath(r))}" aria-label="批量选择 ${esc(filename(wfPath(r)))}" ${paths.has(wfPath(r))?'checked':''}></td>`);}
+ $('#rows thead tr')?.insertAdjacentHTML('afterbegin','<th><input type="checkbox" id="wf-all" aria-label="全选当前筛选资料"></th>');
+ const visible=pageRows().filter(r=>r.available!==false);if($('#wf-all')){$('#wf-all').checked=visible.length>0&&visible.every(r=>paths.has(wfPath(r)));$('#wf-all').indeterminate=visible.some(r=>paths.has(wfPath(r)))&&!$('#wf-all').checked;}
+ $('#wf-toolbar')?.remove();$('.table-area .filters')?.insertAdjacentHTML('beforebegin',`<div class="toolbar" id="wf-toolbar"><span>批量已选 ${paths.size} 项</span><button data-action="wf-manual" ${paths.size?'':'disabled'}>批量指定归属</button><button data-action="wf-ai" ${paths.size?'':'disabled'}>批量补充说明并交给AI</button><button data-action="wf-adopt" ${paths.size?'':'disabled'}>预览所选AI归属</button><button data-action="wf-clear">清除选择</button><button data-action="wf-history">改名记录</button></div>`);
+};
+document.addEventListener('change',e=>{
+ if(e.target.dataset.wfSelect!==undefined){const v=view();v.batchPaths||=new Set();e.target.checked?v.batchPaths.add(e.target.dataset.wfSelect):v.batchPaths.delete(e.target.dataset.wfSelect);renderRows();}
+ if(e.target.id==='wf-all'){const v=view();v.batchPaths||=new Set();for(const r of pageRows().filter(r=>r.available!==false)){if(e.target.checked&&v.batchPaths.size<100)v.batchPaths.add(wfPath(r));else if(!e.target.checked)v.batchPaths.delete(wfPath(r));}renderRows();}
+});
+const wfBaseDetail=renderDetail;
+renderDetail=function(){wfBaseDetail();const r=S.focus;if(!r||r.data||r.available===false||r.status==='resolved_external'||!['inbox','review'].includes(S.page))return;$('#detail .detail-actions')?.insertAdjacentHTML('beforeend','<button data-action="wf-rename">根据内容建议文件名</button>');};
+function wfPlans(result,page){
+ const v=view(page);v.batchTicket=result.ticket;
+ modal('批量归档 · 逐项核对',`<p>仅处理本次选中的资料；取消勾选可排除单项。没有移动任何文件。</p>${result.plans.map(p=>{const a=p.actions[0];return `<div class="preview-item"><label><input type="checkbox" data-wf-plan="${p.id}" checked> ${esc(a.source)}</label><div>↓ ${esc(a.target)}</div><p>${esc(archiveModeSummary(a))}</p><p class="hint">${esc(a.evidence)}</p></div>`;}).join('')}${result.errors.map(r=>`<p class="hint">未生成计划：${esc(r.source)} · ${esc(r.error)}</p>`).join('')}<div class="modal-actions"><button data-action="close-modal">返回</button><button data-action="wf-execute" ${result.plans.length?'':'disabled'}>确认执行勾选计划</button></div>`,page);
+}
+function wfRenameDialog(result,page){
+ const v=view(page);v.renameDraft={...v.renameDraft,...result};const d=v.renameDraft;
+ modal('内容辅助命名 · 建议',`<p>原名：${esc(filename(d.source))}</p><label>建议文件名（保留扩展名）<input id="wf-name" class="full-width" value="${esc(d.suggested||d.original)}"></label><label>改名依据<textarea id="wf-reason">${esc(d.reason)}</textarea></label><p>现有名称明确时保留原名；证据不足可以取消。确认前不会修改文件。</p><label>给AI补充性质或用途<textarea id="wf-rename-note" maxlength="2000"></textarea></label><div class="modal-actions"><button data-action="close-modal">保留原名</button><button data-action="wf-rename-ai" ${d.eligible?'':'disabled'}>预览发送给AI</button><button data-action="wf-rename-preview" ${d.eligible?'':'disabled'}>检查改名预览</button></div>`,page);
+}
+const wfBasePerform=perform;
+perform=async function(action,page=S.page){
+ const v=view(page);
+ if(action==='wf-clear'){v.batchPaths=new Set();if(S.page===page)renderRows();return;}
+ if(action==='wf-manual'){const rows=wfChosen(page);if(!rows.length)throw Error('请选择文件');await chooseTarget(page,rows.map(r=>r.id));return;}
+ if(action==='wf-adopt'){wfPlans(await job('wb-batch-adopt',{ids:wfChosen(page).map(r=>r.id)},page),page);return;}
+ if(action==='wf-execute'){
+  const ids=$$('[data-wf-plan]:checked').map(r=>r.dataset.wfPlan);if(!ids.length)throw Error('请选择要执行的计划');const ticket=v.batchTicket;v.batchTicket=null;closeModal(page);
+  const result=await job('wb-batch-execute',{ticket,plan_ids:ids},page);v.batchPaths=new Set(result.results.filter(r=>!['committed','already_committed'].includes(r.status)).map(r=>r.source));await settled(page,'本批处理完成，请查看逐项结果。',false,true);
+  modal('批量处理结果',result.results.map(r=>`<div class="preview-item">${esc(r.source)} · ${esc(labels[r.status]||r.status)}${r.error?`<p>${esc(r.error)}</p>`:''}</div>`).join('')+'<button data-action="close-modal">关闭</button>',page);return;
+ }
+ if(action==='wf-ai'){
+  const rows=wfChosen(page);if(!rows.length)throw Error('请选择文件');v.batchObjects=rows.map(r=>({id:r.id,path:wfPath(r),locked:!!r.details?.assignment?.manual_locked}));
+  modal('批量指导AI分类',`<label>本批共同背景或性质（必填）<textarea id="wf-common" maxlength="1500"></textarea></label><p>每份资料仍独立判断，结果可以分到不同目录。既有人工锁定继续受到保护。</p>${v.batchObjects.map((r,i)=>`<div class="field"><label>${esc(r.path)} · 单项补充（可选）</label><textarea data-wf-note="${i}" maxlength="500"></textarea>${r.locked?`<label><input type="checkbox" data-wf-override="${i}">明确要求依据本次说明重新判断这一个人工锁定归属</label>`:''}</div>`).join('')}<div class="modal-actions"><button data-action="close-modal">取消</button><button data-action="wf-ai-preview">预览本次发送范围</button></div>`,page);return;
+ }
+ if(action==='wf-ai-preview'){
+  const rows=v.batchObjects,notes={};for(const r of $$('[data-wf-note]'))notes[rows[Number(r.dataset.wfNote)].id]=r.value;
+  const override_ids=$$('[data-wf-override]:checked').map(r=>rows[Number(r.dataset.wfOverride)].id);const result=await job('wb-batch-ai-preview',{ids:rows.map(r=>r.id),common:$('#wf-common').value,notes,override_ids},page);v.batchAiTicket=result.ticket;
+  modal('批量AI · 发送确认',`<p>${result.documents.length} 项 / ${result.batches} 批 · ${esc(result.model)} · 今日剩余 ${result.daily_remaining} 批。仅发送以下名称、上下文及已授权的必要摘录。</p>${result.documents.map(r=>`<details><summary>${esc(r.source)}</summary><p>${esc(r.user_context)}</p><pre>${esc(r.text||'未授权或未提取正文')}</pre></details>`).join('')}<div class="modal-actions"><button data-action="close-modal">取消</button><button data-action="wf-ai-run">确认发送选中资料</button></div>`,page);return;
+ }
+ if(action==='wf-ai-run'){
+  const ticket=v.batchAiTicket;v.batchAiTicket=null;closeModal(page);const result=await job('wb-batch-ai-run',{ticket},page);await settled(page,'AI批量判断已完成，文件尚未移动；可在待办中核对后选择“预览所选AI归属”。');
+  modal('批量AI结果',result.batches.map((r,i)=>`<div class="preview-item">第 ${i+1} 批：${r.status==='done'?'已返回':'未完成'}${r.error?`<p>${esc(r.error)}</p>`:''}${(r.results||[]).map(x=>`<p>${esc(x.source)} · ${esc(labels[x.status]||x.status)} ${esc(x.error||'')}</p>`).join('')}</div>`).join('')+'<button data-action="close-modal">关闭</button>',page);return;
+ }
+ if(action==='wf-rename'){
+  const obj=v.focus;v.renameDraft={id:obj.id,source:wfPath(obj)};wfRenameDialog(await job('wb-rename-suggest',{id:obj.id},page),page);return;
+ }
+ if(action==='wf-rename-ai'){
+  const result=await job('wb-rename-ai-preview',{id:v.renameDraft.id,note:$('#wf-rename-note').value},page);v.renameAiTicket=result.ticket;
+  modal('改名建议 · AI发送确认',`<p>模型 ${esc(result.model)}。发送以下数据；AI只给名称建议。</p><pre>${esc(JSON.stringify(result.request,null,2))}</pre><div class="modal-actions"><button data-action="close-modal">取消</button><button data-action="wf-rename-ai-run">确认发送并生成建议</button></div>`,page);return;
+ }
+ if(action==='wf-rename-ai-run'){const ticket=v.renameAiTicket;v.renameAiTicket=null;closeModal(page);wfRenameDialog(await job('wb-rename-ai-run',{ticket},page),page);return;}
+ if(action==='wf-rename-preview'){
+  const result=await job('wb-rename-preview',{id:v.renameDraft.id,name:$('#wf-name').value,reason:$('#wf-reason').value},page);v.renameTicket=result.ticket;
+  modal('确认文件改名',`<div class="preview-item">${esc(result.source)}<div>↓</div>${esc(result.target)}</div><p>仅修改文件名，保留内容；同名冲突或文件变化时停止。需要时可在改名记录中检查撤销。</p><div class="modal-actions"><button data-action="close-modal">取消</button><button data-action="wf-rename-execute">确认改名</button></div>`,page);return;
+ }
+ if(action==='wf-rename-execute'){
+  const ticket=v.renameTicket;v.renameTicket=null;closeModal(page);await job('wb-rename-execute',{ticket},page);v.focus=null;v.detail=null;await settled(page,'文件名已更新，内容保留。',false,true);return;
+ }
+ if(action==='wf-history'){
+  const data=await job('wb-rename-history',{},page);modal('文件改名记录',data.rows.map(r=>`<div class="preview-item">${esc(r.source)} → ${esc(r.target)}<p>${esc(r.completed_at)}</p><button data-action="wf-undo" data-rename-id="${r.id}">检查撤销</button></div>`).join('')||'<p>尚无改名记录。</p>',page);return;
+ }
+ if(action==='wf-undo'){
+  const id=document.activeElement?.dataset.renameId;if(!id)throw Error('请选择改名记录');const r=await job('wb-rename-undo-preview',{operation_id:id},page);v.renameTicket=r.ticket;
+  modal('撤销改名 · 核对',`<p>${esc(r.source)} → ${esc(r.target)}</p><p>原名未被占用且内容与记录一致时才执行。</p><button data-action="wf-rename-execute">确认改名</button><button data-action="close-modal">取消</button>`,page);return;
+ }
+ return wfBasePerform(action,page);
+};

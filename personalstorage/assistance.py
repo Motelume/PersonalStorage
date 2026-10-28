@@ -21,6 +21,10 @@ def prepare(app,manager,kind,goal):
 def run(app,manager,packet):
     with instance_lock(app.state.profile):
         if packet['policy_hash']!=Policy(app.root).hash or packet['settings']!=manager.settings():raise SafetyError('规则或AI设置变化，请重新预览')
+        if packet['kind']=='rename':
+            from .renaming import source_path
+            from .common import manifest
+            if manifest(source_path(app,packet['source']))!=packet['manifest']:raise SafetyError('文件已变化，请重新预览后发送')
         if manager.status()['calls_today']>=manager.settings()['daily_limit']:raise SafetyError('达到每日AI调用上限')
         provider=manager.provider_factory(manager.vault.read(),model=manager.settings()['model']);history=app.state.get('ai_history',[])
         record={'id':packet['id'],'at':now(),'model':manager.settings()['model'],'items':1,'kind':packet['kind'],'status':'failed','usage':{}}
@@ -32,7 +36,10 @@ def run(app,manager,packet):
                 p=safe_path(app.root,target['path']);st=p.stat()
                 if [st.st_dev,st.st_ino]!=target['identity']:raise SafetyError('候选目录身份变化，旧建议不采用')
                 return target
-            if packet['kind']=='rules':
+            if packet['kind']=='rename':
+                from .renaming import validate_answer
+                output=validate_answer(app,packet,answer)
+            elif packet['kind']=='rules':
                 rows=answer.get('rules')
                 if not isinstance(rows,list) or not 1<=len(rows)<=5:raise SafetyError('AI规则数量无效')
                 result=[]
@@ -52,6 +59,7 @@ def run(app,manager,packet):
                     seen.add(pair);result.append({'source':a,'target':b,'reason':clean(row.get('reason',''),300)})
                 output={'links':result}
             if Policy(app.root).hash!=packet['policy_hash']:raise SafetyError('AI返回期间规则变化，未采用建议')
+            if packet['settings']!=manager.settings():raise SafetyError('AI返回期间设置变化，未采用建议')
             record['status']='completed';return {**output,'files_moved':False,'rules_published':False,'usage':provider.usage}
         finally:
             record['usage']=getattr(provider,'usage',{});counts=app.state.get('ai_daily_counts',{});day=record['at'][:10]

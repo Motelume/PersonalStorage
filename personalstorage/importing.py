@@ -29,6 +29,10 @@ def build(app,objects,*,target_parent=None,evidence=''):
         m=manifest(path);parent=target_parent or obj.get('action',{}).get('target_parent')
         if not parent:raise SafetyError('尚无确定归属，请先让AI分类或选择目标')
         target=app.policy.target(parent,path.name);destination=safe_path(app.root,target);reuse=False
+        mark=app.state.db.execute('SELECT data FROM inbox_imports WHERE source=?',(source,)).fetchone()
+        if mark:
+            proof=json.loads(mark['data'])
+            if proof.get('renamed') and proof.get('target')!=target and safe_path(app.root,proof['target']).exists():raise SafetyError('已有归档副本已改名，请核对该副本；本次不重复导入或删除原件')
         if destination.exists() and mode=='move':
             mark=app.state.db.execute('SELECT data FROM inbox_imports WHERE source=?',(source,)).fetchone()
             proof=json.loads(mark['data']) if mark else {}

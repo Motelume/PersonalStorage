@@ -33,7 +33,7 @@ jobs:
         run: |
           $env:NODE_PATH="$env:RUNNER_TEMP\ps-playwright\node_modules"
           $env:PYTHON=(Get-Command python).Source
-          $scripts=@('frontend_smoke.cjs','frontend_ai_smoke.cjs','frontend_workspace_smoke.cjs','frontend_intelligent_smoke.cjs','frontend_overview_smoke.cjs','frontend_ocr_smoke.cjs','frontend_rules_smoke.cjs','frontend_beta_smoke.cjs')
+          $scripts=@('frontend_smoke.cjs','frontend_ai_smoke.cjs','frontend_workspace_smoke.cjs','frontend_intelligent_smoke.cjs','frontend_overview_smoke.cjs','frontend_ocr_smoke.cjs','frontend_rules_smoke.cjs','frontend_beta_smoke.cjs','frontend_workflows_smoke.cjs')
           foreach($script in $scripts){node (Join-Path tools $script); if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}}
       - name: Build portable and installer packages
         run: python -X utf8 tools/build_release.py

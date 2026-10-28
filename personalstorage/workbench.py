@@ -19,10 +19,33 @@ def consume(desktop,body,kind,once=True):
 
 def status(app):
     return {'search':searching.status(app),'backups':backup.catalog(app),'shared_rules':rule_package.preview(app),
-            'recognition':recognition.status(),'installed_versions':distribution.installed(),'resume':app.state.get('job_retries',{}),'version_requires_user_approval':True,'restore_notice':app.state.get('restore_notice')}
+            'recognition':recognition.status(),'installed_versions':distribution.installed(),'resume':app.state.get('job_retries',{}),'version_requires_user_approval':True,'restore_notice':app.state.get('restore_notice'),'quality':app.state.get('quality_report')}
 
 
 def perform(desktop,app,action,body,job):
+    if action.startswith('wb-batch-'):
+        from .batch import perform as batch_perform
+        return batch_perform(desktop,app,action,body,job)
+    if action.startswith('wb-rename-'):
+        from . import renaming
+        if action=='wb-rename-suggest':
+            obj=desktop.get(body.get('id'));result=renaming.suggest(app,obj['path']);obj['rename_manifest']=result['manifest'];obj['rename_policy']=app.policy.hash;return {k:v for k,v in result.items() if k!='manifest'}
+        if action=='wb-rename-preview':
+            from .common import manifest
+            obj=desktop.get(body.get('id'))
+            if obj.get('rename_policy')!=app.policy.hash or obj.get('rename_manifest')!=manifest(renaming.source_path(app,obj['path'])):raise SafetyError('改名建议对应的文件或规则已变化，请重新读取建议')
+            value=renaming.preview(app,obj['path'],body.get('name'),body.get('reason'));return {'ticket':ticket(desktop,'rename',value),'source':value['source'],'target':value['target']}
+        if action=='wb-rename-undo-preview':
+            value=renaming.undo_preview(app,body.get('operation_id'));return {'ticket':ticket(desktop,'rename',value),'source':value['source'],'target':value['target']}
+        if action=='wb-rename-execute':
+            result=renaming.apply(app,consume(desktop,body,'rename'));desktop.scan_cache.clear();return result
+        if action=='wb-rename-history':return {'rows':list(reversed(app.state.get('file_rename_history',[])))[0:100]}
+        manager=AIManager(app,vault=desktop.credential_vault,provider_factory=desktop.ai_provider_factory)
+        if action=='wb-rename-ai-preview':
+            obj=desktop.get(body.get('id'));packet=renaming.ai_prepare(app,manager,obj['path'],body.get('note',''));packet['object_id']=body['id'];return {'ticket':ticket(desktop,'rename-ai',packet),'request':packet['request'],'model':packet['settings']['model']}
+        if action=='wb-rename-ai-run':
+            packet=consume(desktop,body,'rename-ai');result=assistance.run(app,manager,packet);obj=desktop.get(packet['object_id']);obj['rename_manifest']=packet['manifest'];obj['rename_policy']=packet['policy_hash'];return result
+        raise SafetyError('未知改名操作')
     if action=='wb-index':return searching.build(app,job,body.get('budget',500))
     if action=='wb-search':
         result=searching.search(app,body.get('query'),body.get('semantic') is True)

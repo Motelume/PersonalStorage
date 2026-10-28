@@ -1,0 +1,27 @@
+const {chromium}=require('playwright'),{spawn}=require('child_process'),readline=require('readline'),fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const root=path.resolve(__dirname,'..'),child=spawn(process.env.PYTHON||'python',['-X','utf8',path.join(__dirname,'web_fixture.py'),'--ai-fixture'],{cwd:root,windowsHide:true});let fixture,browser,page;
+async function main(){
+ fixture=await new Promise((resolve,reject)=>{readline.createInterface({input:child.stdout}).once('line',s=>{try{resolve(JSON.parse(s));}catch(e){reject(e);}});child.stderr.on('data',d=>process.stderr.write(d));child.once('error',reject);});
+ const original=path.join(fixture.root,'00_收件箱/新建文本文档.txt');fs.writeFileSync(original,'# 控制系统实验记录\ncourse experiments');const bytes=fs.readFileSync(original);
+ browser=await chromium.launch({headless:true,channel:'msedge'});page=await browser.newPage({viewport:{width:1440,height:980}});const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+ const idle=()=>page.waitForFunction(()=>!S.busy&&!S.acting);const act=async a=>{await page.locator(`[data-action=${a}]`).first().click();await idle();};
+ const nav=async p=>{await page.locator(`nav [data-page=${p}]`).click();await idle();};const select=async n=>page.getByRole('checkbox',{name:'批量选择 '+n,exact:true}).check();
+ await page.goto(fixture.url);await page.locator('tbody tr').filter({hasText:'新建文本文档.txt'}).waitFor();await idle();
+ await page.locator('tbody tr').filter({hasText:'新建文本文档.txt'}).click();await act('wf-rename');assert.equal(await page.locator('#wf-name').inputValue(),'控制系统实验记录.txt');
+ assert(fs.existsSync(original));await act('wf-rename-preview');assert(fs.existsSync(original));await act('wf-rename-execute');
+ const renamed=path.join(fixture.root,'00_收件箱/控制系统实验记录.txt');assert(fs.existsSync(renamed));assert.deepEqual(fs.readFileSync(renamed),bytes);
+ await act('wf-history');await act('wf-undo');await act('wf-rename-execute');assert(fs.existsSync(original));assert.deepEqual(fs.readFileSync(original),bytes);
+ await select('note.txt');await select('other.txt');await act('wf-manual');
+ await page.getByRole('button',{name:'▱ 01_课程学习'}).click();await page.getByRole('button',{name:'▱ 测试课程'}).click();await page.locator('.pick-path').filter({hasText:'01_课程学习/测试课程'}).waitFor();
+ await page.locator('#evidence').fill('这些都是本课程实验资料');await page.locator('#use-dir').click();await idle();await page.locator('[data-wf-plan]').first().waitFor();assert.equal(await page.locator('[data-wf-plan]').count(),2);
+ await page.locator('[data-wf-plan]').nth(1).uncheck();await act('wf-execute');assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/note.txt')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/other.txt')));await act('close-modal');
+ await select('other.txt');await select('unknown.txt');await act('wf-ai');await page.locator('#wf-common').fill('这两份都是同一课程的学习材料');await page.locator('[data-wf-note="1"]').fill('需要结合正文判断');
+ await act('wf-ai-preview');assert.equal(await page.evaluate(()=>S.boot.ai.calls_today),0);assert((await page.locator('dialog').textContent()).includes('2 项'));await act('wf-ai-run');await act('close-modal');
+ assert(fs.existsSync(path.join(fixture.root,'00_收件箱/other.txt')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));
+ await nav('review');await select('other.txt');await select('unknown.txt');await act('wf-adopt');assert.equal(await page.locator('[data-wf-plan]').count(),2);
+ const items=page.locator('dialog .preview-item');const unknown=items.filter({hasText:'unknown.txt'});await unknown.locator('[data-wf-plan]').uncheck();await act('wf-execute');
+ assert(fs.existsSync(path.join(fixture.root,'01_课程学习/测试课程/other.txt')));assert(fs.existsSync(path.join(fixture.root,'00_收件箱/unknown.txt')));await act('close-modal');
+ await page.setViewportSize({width:1024,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ assert.deepEqual(errors,[]);console.log('PASS content rename preview/execute/undo, unchanged bytes, selected-only bulk manual decisions, shared/per-file AI notes, consent, independent AI adoption and subset execution');
+}
+main().catch(async e=>{console.error(e);if(page)console.error(await page.locator('#notice').textContent());process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(fixture)fs.writeFileSync(fixture.stop,'stop');else child.kill();});

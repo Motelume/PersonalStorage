@@ -646,10 +646,11 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path.startswith('/download/'):
                 target = d.downloads[url.path.rsplit('/', 1)[1]]
                 return self.send(200, target.read_bytes(), 'application/octet-stream', {'Content-Disposition':'attachment; filename="' + target.name + '"'})
-            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js','/rules.js','/rules.css','/workbench.js','/workbench.css'):
+            elif url.path in ('/', '/app.js', '/app.css','/ai.js','/management.js','/overview.js','/overview.css','/ocr.js','/rules.js','/rules.css','/workbench.js','/workbench.css','/workflows.js'):
                 name = 'index.html' if url.path == '/' else url.path[1:]
                 types = {'index.html':'text/html; charset=utf-8', 'app.js':'text/javascript; charset=utf-8', 'ai.js':'text/javascript; charset=utf-8','management.js':'text/javascript; charset=utf-8', 'app.css':'text/css; charset=utf-8'}
                 types.update({'overview.js':'text/javascript; charset=utf-8','overview.css':'text/css; charset=utf-8','ocr.js':'text/javascript; charset=utf-8'})
+                types['workflows.js']='text/javascript; charset=utf-8'
                 types.update({'workbench.js':'text/javascript; charset=utf-8','workbench.css':'text/css; charset=utf-8'})
                 types.update({'rules.js':'text/javascript; charset=utf-8','rules.css':'text/css; charset=utf-8'})
                 return self.send(200, (STATIC / name).read_bytes(), types[name])

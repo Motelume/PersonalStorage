@@ -34,6 +34,10 @@ class Application:
                     # A live publisher owns the journal. Atomic JSON remains readable.
                     pass
             self.policy=Policy(self.root)
+            if self.state.get('file_rename_journal'):
+                from .renaming import recover as recover_file
+                from .common import instance_lock
+                with instance_lock(self.state.profile):recover_file(self)
         except BaseException:self.state.close();raise
     def plan(self,**options): return build_plan(self.root,self.state,self.policy,**options)
     def execute(self,plan_id): return execute(self.root,self.state,self.policy,plan_id)

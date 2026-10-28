@@ -97,18 +97,18 @@ async function preview(ids,extra={},page=S.page){
  const v=view(page);v.preview=null;const p=await job('preview',{ids,...extra},page);v.preview=p;
  modal(extra.waiting?'移入待确认 · 执行预览':'整理计划 · 执行预览',`<p>本次只处理以下 ${p.actions.length} 项。保留原名与内容。请核对每项归档方式：转移模式会在副本完整校验后删除源文件。</p>${p.actions.map(a=>`<div class="preview-item"><strong>${esc(filename(a.source))}</strong><div class="path">${esc(a.source)}</div><div class="arrow">↓</div><div>${esc(a.target)}</div><p class="hint">${archiveModeSummary(a)}</p><span class="sub">${esc(a.evidence)}</span></div>`).join('')}<p class="hint">预览有效期15分钟。文件、规则或归属变化后需重新预览。</p><div class="modal-actions"><button data-action="close-modal">返回</button><button class="primary" data-action="execute">${executeLabel(p)}</button></div>`,page);
 }
-async function chooseTarget(page=S.page){
- const v=view(page),focus=v.focus;if(!focus)return;
- if(!v.detail){const detail=await job('detail',{id:focus.id},page);if(v.focus?.id!==focus.id)return;v.detail=detail;if(S.page===page)renderDetail();}
+async function chooseTarget(page=S.page,selectedIds=null){
+ const v=view(page),focus=v.focus;if(!focus&&!selectedIds)return;
+ if(!selectedIds&&!v.detail){const detail=await job('detail',{id:focus.id},page);if(v.focus?.id!==focus.id)return;v.detail=detail;if(S.page===page)renderDetail();}
  const stack=[];let chosen=null;
  async function draw(id){
   modal('选择本次资料的归属','<p>正在读取可用目录…</p>',page);
   const data=await api('directories'+(id?'?id='+encodeURIComponent(id):''));chosen=id?{id,path:data.path}:null;
   if(S.page!==page){note('目录已准备好，点击“选择归属位置”继续。',false,page);return;}
-  modal('选择本次资料的归属',`<p>仅影响当前资料，选择已有目录后填写判断依据。</p><div class="toolbar" style="margin-top:15px"><button id="dir-back" ${stack.length?'':'disabled'}>← 上一级</button><div class="pick-path">${esc(data.path||'选择资料分类')}</div></div><div class="directory-list">${data.items.map(r=>`<button data-dir="${r.id}"><span>▱ ${esc(r.name)}</span><span>›</span></button>`).join('')||'<p>此目录没有可选的下级目录。</p>'}</div><div style="margin-top:22px"><label class="hint" for="evidence">本次归属依据（必填）</label><textarea id="evidence" placeholder="例如：这是某项目专用的学习资料，随该项目保存。"></textarea></div><div class="modal-actions"><button data-action="close-modal">取消</button><button class="primary" id="use-dir" ${chosen?'':'disabled'}>使用此目录并预览</button></div>`,page);
+  modal('选择本次资料的归属',`<p>本次处理 ${selectedIds?selectedIds.length:1} 项资料。选择已有目录后填写判断依据。</p><div class="toolbar" style="margin-top:15px"><button id="dir-back" ${stack.length?'':'disabled'}>← 上一级</button><div class="pick-path">${esc(data.path||'选择资料分类')}</div></div><div class="directory-list">${data.items.map(r=>`<button data-dir="${r.id}"><span>▱ ${esc(r.name)}</span><span>›</span></button>`).join('')||'<p>此目录没有可选的下级目录。</p>'}</div><div style="margin-top:22px"><label class="hint" for="evidence">本次归属依据（必填）</label><textarea id="evidence" placeholder="例如：这是某项目专用的学习资料，随该项目保存。"></textarea></div><div class="modal-actions"><button data-action="close-modal">取消</button><button class="primary" id="use-dir" ${chosen?'':'disabled'}>使用此目录并预览</button></div>`,page);
   $('#dir-back').onclick=()=>draw(stack.pop()).catch(handleError);
   document.querySelectorAll('[data-dir]').forEach(b=>b.onclick=()=>{stack.push(id);draw(b.dataset.dir).catch(handleError);});
-  $('#use-dir').onclick=()=>{if(v.job)return;const evidence=$('#evidence').value.trim();if(!evidence){note('请填写本次归属依据。',true,page);return;}preview([focus.id],{target_id:chosen.id,evidence},page).catch(e=>note(e.message,true,page));};
+  $('#use-dir').onclick=()=>{if(v.job)return;const evidence=$('#evidence').value.trim();if(!evidence){note('请填写本次归属依据。',true,page);return;}(selectedIds?job('wb-batch-preview',{ids:selectedIds,target_id:chosen.id,evidence},page).then(r=>wfPlans(r,page)):preview([focus.id],{target_id:chosen.id,evidence},page)).catch(e=>note(e.message,true,page));};
  }
  await draw();
 }

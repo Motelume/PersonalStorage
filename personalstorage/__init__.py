@@ -1,2 +1,2 @@
 """Local PersonalStorage with explicitly requested DeepSeek reviews."""
-__version__ = '0.10.0b2'
+__version__ = '0.10.0b3'
